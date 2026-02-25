@@ -48,7 +48,7 @@ def test_ws_client_parses_bookticker_and_kline_events() -> None:
                     "e": "kline",
                     "E": 1700000001000,
                     "s": "BTCUSDT",
-                    "k": {"t": 1700000000000, "o": "99", "h": "103", "l": "98", "c": "101", "x": True},
+                    "k": {"t": 1700000000000, "o": "99", "h": "103", "l": "98", "c": "101"},
                 },
             }
         ),
@@ -65,7 +65,6 @@ def test_ws_client_parses_bookticker_and_kline_events() -> None:
     assert ticks[0].price == 101.0
     assert len(kline_ticks) == 1
     assert kline_ticks[0].candle.close == 101.0
-    assert kline_ticks[0].is_closed is True
 
 
 def test_ws_client_close_marks_disconnected() -> None:

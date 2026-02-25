@@ -28,7 +28,6 @@ class DataStore:
         self._klines: dict[str, deque[Candle]] = {symbol: deque(maxlen=max_klines) for symbol in symbols}
         self._last_price_ts: dict[str, datetime | None] = {symbol: None for symbol in symbols}
         self._last_kline_close_ts: dict[str, datetime | None] = {symbol: None for symbol in symbols}
-        self._last_ws_kline_open_time: dict[str, int | None] = {symbol: None for symbol in symbols}
 
     def set_mode(self, mode: str) -> None:
         with self._lock:
@@ -52,27 +51,6 @@ class DataStore:
             self._klines[symbol].clear()
             self._klines[symbol].extend(klines)
             self._last_kline_close_ts[symbol] = ts
-            self._last_ws_kline_open_time[symbol] = None
-
-    def upsert_ws_kline(
-        self,
-        symbol: str,
-        candle: Candle,
-        open_time_ms: int,
-        is_closed: bool,
-        ts: datetime | None = None,
-    ) -> None:
-        ts = ts or datetime.now(tz=timezone.utc)
-        with self._lock:
-            last_open = self._last_ws_kline_open_time[symbol]
-            if self._klines[symbol] and last_open == open_time_ms:
-                self._klines[symbol][-1] = candle
-            else:
-                self._klines[symbol].append(candle)
-                self._last_ws_kline_open_time[symbol] = open_time_ms
-
-            if is_closed:
-                self._last_kline_close_ts[symbol] = ts
 
     def snapshot(self, symbol: str) -> SymbolSnapshot:
         with self._lock:

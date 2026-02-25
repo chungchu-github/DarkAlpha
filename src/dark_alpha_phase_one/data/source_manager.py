@@ -11,18 +11,14 @@ from dark_alpha_phase_one.data.datastore import DataStore
 
 class RestClientProtocol(Protocol):
     def fetch_price(self, symbol: str): ...
-
     def fetch_klines(self, symbol: str, limit: int): ...
 
 
 class WsClientProtocol(Protocol):
     connected: bool
-
     def connect(self) -> None: ...
-
     def close(self) -> None: ...
-
-    def read_events(self) -> tuple[list, list]: ...
+    def read_price_ticks(self) -> list: ...
 
 
 class SourceManager:
@@ -66,9 +62,9 @@ class SourceManager:
         self._ws_next_retry_at = 0.0
 
         self.datastore.set_mode(self._mode)
-        self._safe_state_sync(reason="bootstrap")
         if self._mode == "ws":
             self._connect_ws(initial=True)
+
 
     def _connect_ws(self, *, initial: bool = False) -> None:
         try:
@@ -89,43 +85,27 @@ class SourceManager:
         now = datetime.now(tz=timezone.utc)
         now_mono = time.monotonic()
 
-        self._attempt_ws_events()
+        self._attempt_ws_ticks()
         self._evaluate_staleness(now)
+
+        self._poll_rest_klines(now_mono)
 
         if self._mode == "rest":
             self._poll_rest_prices(now_mono)
-            self._poll_rest_klines(now_mono)
             self._attempt_ws_recover(now_mono)
 
         self._log_health_if_needed(now_mono, now)
 
-    def _attempt_ws_events(self) -> None:
+    def _attempt_ws_ticks(self) -> None:
         if self._mode != "ws" or not self.ws_client.connected:
             return
         try:
-            ticks, kline_ticks = self.ws_client.read_events()
-            self._apply_ws_events(ticks, kline_ticks)
+            ticks = self.ws_client.read_price_ticks()
+            for tick in ticks:
+                self.datastore.update_price(tick.symbol, tick.price, tick.ts)
         except Exception as exc:  # noqa: BLE001
             self._switch_mode("rest", symbol="*", reason=f"exception:{exc}")
             self.ws_client.close()
-
-    def _apply_ws_events(self, ticks: list, kline_ticks: list) -> int:
-        fresh_ticks = 0
-        now = datetime.now(tz=timezone.utc)
-        for tick in ticks:
-            self.datastore.update_price(tick.symbol, tick.price, tick.ts)
-            age = (now - tick.ts).total_seconds()
-            if age <= self.stale_seconds:
-                fresh_ticks += 1
-        for kline_tick in kline_ticks:
-            self.datastore.upsert_ws_kline(
-                kline_tick.symbol,
-                kline_tick.candle,
-                kline_tick.open_time_ms,
-                kline_tick.is_closed,
-                kline_tick.ts,
-            )
-        return fresh_ticks
 
     def _poll_rest_prices(self, now_mono: float) -> None:
         if now_mono - self._last_rest_price_poll < self.rest_price_poll_seconds:
@@ -138,7 +118,9 @@ class SourceManager:
     def _poll_rest_klines(self, now_mono: float) -> None:
         if now_mono - self._last_rest_kline_poll < self.rest_kline_poll_seconds:
             return
-        self._state_sync_from_rest(reason="rest_poll", limit=max(120, self.state_sync_klines))
+        for symbol in self.symbols:
+            klines, ts = self.rest_client.fetch_klines(symbol, limit=max(120, self.state_sync_klines))
+            self.datastore.merge_klines(symbol, klines, ts)
         self._last_rest_kline_poll = now_mono
 
     def _attempt_ws_recover(self, now_mono: float) -> None:
@@ -158,7 +140,7 @@ class SourceManager:
                 return
 
         try:
-            ticks, kline_ticks = self.ws_client.read_events()
+            ticks = self.ws_client.read_price_ticks()
         except Exception as exc:  # noqa: BLE001
             self.ws_client.close()
             self._ws_next_retry_at = now_mono + self._ws_backoff
@@ -166,26 +148,25 @@ class SourceManager:
             logging.warning("WS recover read failed: %s", exc)
             return
 
-        fresh_ticks = self._apply_ws_events(ticks, kline_ticks)
+        fresh_ticks = 0
+        now = datetime.now(tz=timezone.utc)
+        for tick in ticks:
+            self.datastore.update_price(tick.symbol, tick.price, tick.ts)
+            age = (now - tick.ts).total_seconds()
+            if age <= self.stale_seconds:
+                fresh_ticks += 1
+
         if fresh_ticks > 0:
             self._ws_good_ticks += fresh_ticks
 
         if self._ws_good_ticks >= self.ws_recover_good_ticks:
-            if self._safe_state_sync(reason="recovered"):
-                self._switch_mode("ws", symbol="*", reason="recovered")
-                self._ws_good_ticks = 0
+            self._state_sync_from_rest(reason="recovered")
+            self._switch_mode("ws", symbol="*", reason="recovered")
+            self._ws_good_ticks = 0
 
-    def _safe_state_sync(self, reason: str) -> bool:
-        try:
-            self._state_sync_from_rest(reason=reason, limit=self.state_sync_klines)
-            return True
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("State sync failed (%s): %s", reason, exc)
-            return False
-
-    def _state_sync_from_rest(self, reason: str, limit: int) -> None:
+    def _state_sync_from_rest(self, reason: str) -> None:
         for symbol in self.symbols:
-            klines, ts = self.rest_client.fetch_klines(symbol, limit=limit)
+            klines, ts = self.rest_client.fetch_klines(symbol, limit=self.state_sync_klines)
             self.datastore.merge_klines(symbol, klines, ts)
             logging.info("State sync (%s) for %s with %d klines", reason, symbol, len(klines))
 
