@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from dark_alpha_phase_one.calculations import Candle
-from dark_alpha_phase_one.data.binance_ws import WsKlineTick, WsTick
+from dark_alpha_phase_one.data.binance_ws import WsTick
 from dark_alpha_phase_one.data.datastore import DataStore
 from dark_alpha_phase_one.data.source_manager import SourceManager
 
@@ -26,7 +26,6 @@ class FakeWsClient:
         self.connected = True
         self.raise_exc = False
         self.ticks: list[WsTick] = []
-        self.kline_ticks: list[WsKlineTick] = []
 
     def connect(self) -> None:
         self.connected = True
@@ -34,14 +33,12 @@ class FakeWsClient:
     def close(self) -> None:
         self.connected = False
 
-    def read_events(self) -> tuple[list[WsTick], list[WsKlineTick]]:
+    def read_price_ticks(self) -> list[WsTick]:
         if self.raise_exc:
             raise RuntimeError("ws_fail")
         ticks = self.ticks
-        kline_ticks = self.kline_ticks
         self.ticks = []
-        self.kline_ticks = []
-        return ticks, kline_ticks
+        return ticks
 
 
 def _manager(datastore: DataStore, rest: FakeRestClient, ws: FakeWsClient) -> SourceManager:
