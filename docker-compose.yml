@@ -1,0 +1,10 @@
+services:
+  darkalpha-phase-one:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    command: >
+      bash -lc "pip install poetry && poetry install && poetry run python -m dark_alpha_phase_one.main"
