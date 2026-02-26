@@ -38,6 +38,8 @@ class ClockSyncState:
     clock_skew_ms: int = 0
     last_server_ms: int | None = None
     last_sync_local_ms: int | None = None
+    last_force_refresh_local_ms: int | None = None
+    degraded_until_local_ms: int | None = None
     state: str = "degraded"
 
 
@@ -49,11 +51,15 @@ class ClockSync:
         max_clock_error_ms: int,
         refresh_sec: int,
         degraded_retry_sec: int,
+        refresh_cooldown_ms: int,
+        degraded_ttl_ms: int,
     ) -> None:
         self.rest_client = rest_client
         self.max_clock_error_ms = max_clock_error_ms
         self.refresh_sec = refresh_sec
         self.degraded_retry_sec = degraded_retry_sec
+        self.refresh_cooldown_ms = refresh_cooldown_ms
+        self.degraded_ttl_ms = degraded_ttl_ms
         self.state = ClockSyncState()
         self._next_refresh_mono = 0.0
 
@@ -64,6 +70,12 @@ class ClockSync:
     @staticmethod
     def compute_now_ms_corrected(*, local_ms: int, clock_skew_ms: int) -> int:
         return local_ms + clock_skew_ms
+
+    def _transition_state(self, new_state: str, reason: str) -> None:
+        old_state = self.state.state
+        if old_state != new_state:
+            logging.info("event=clock_state_change from=%s to=%s reason=%s", old_state, new_state, reason)
+        self.state.state = new_state
 
     def _set_next_refresh(self, now_mono: float) -> None:
         interval = self.degraded_retry_sec if self.state.state == "degraded" else self.refresh_sec
@@ -84,7 +96,8 @@ class ClockSync:
             self.state.clock_skew_ms = skew_ms
             self.state.last_server_ms = server_ms
             self.state.last_sync_local_ms = local_ms
-            self.state.state = "synced"
+            self._transition_state("synced", "refresh_success")
+            self.state.degraded_until_local_ms = None
             self._set_next_refresh(now_mono)
             logging.info(
                 "event=server_time_refresh result=success unit=ms latency_ms=%d local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d clock_state=%s http_status=na",
@@ -98,7 +111,8 @@ class ClockSync:
             return True
         except Exception as exc:  # noqa: BLE001
             latency_ms = int((time.perf_counter() - start) * 1000)
-            self.state.state = "degraded"
+            self._transition_state("degraded", "refresh_fail")
+            self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
             self.state.clock_skew_ms = 0
             self.state.last_server_ms = None
             self.state.last_sync_local_ms = None
@@ -115,7 +129,22 @@ class ClockSync:
     def now_ms(self) -> int:
         self.refresh_server_time(force=False)
         local_ms = int(time.time() * 1000)
+
         if self.state.state == "degraded":
+            if self.state.last_force_refresh_local_ms is None:
+                return local_ms
+            since_force = local_ms - self.state.last_force_refresh_local_ms
+            if since_force < self.refresh_cooldown_ms:
+                return local_ms
+            self.state.last_force_refresh_local_ms = local_ms
+            if self.refresh_server_time(force=True):
+                refreshed_local_ms = int(time.time() * 1000)
+                return self.compute_now_ms_corrected(
+                    local_ms=refreshed_local_ms,
+                    clock_skew_ms=self.state.clock_skew_ms,
+                )
+            self._transition_state("degraded", "degraded_retry_failed")
+            self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
             return local_ms
 
         corrected_ms = self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=self.state.clock_skew_ms)
@@ -126,6 +155,27 @@ class ClockSync:
         if drift_ms <= self.max_clock_error_ms:
             return corrected_ms
 
+        since_force = None if self.state.last_force_refresh_local_ms is None else local_ms - self.state.last_force_refresh_local_ms
+        cooldown_remaining_ms = 0
+        if since_force is not None and since_force < self.refresh_cooldown_ms:
+            cooldown_remaining_ms = self.refresh_cooldown_ms - since_force
+
+        if cooldown_remaining_ms > 0:
+            self._transition_state("degraded", "cooldown_blocked")
+            self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
+            logging.warning(
+                "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=degrade cooldown_remaining_ms=%d",
+                local_ms,
+                self.state.last_server_ms,
+                self.state.clock_skew_ms,
+                corrected_ms,
+                drift_ms,
+                self.max_clock_error_ms,
+                cooldown_remaining_ms,
+            )
+            return local_ms
+
+        self.state.last_force_refresh_local_ms = local_ms
         logging.warning(
             "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=force_refresh",
             local_ms,
@@ -135,6 +185,7 @@ class ClockSync:
             drift_ms,
             self.max_clock_error_ms,
         )
+
         if self.refresh_server_time(force=True):
             refreshed_local_ms = int(time.time() * 1000)
             return self.compute_now_ms_corrected(
@@ -142,13 +193,8 @@ class ClockSync:
                 clock_skew_ms=self.state.clock_skew_ms,
             )
 
-        logging.warning(
-            "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=na skew_ms=na now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=degrade",
-            local_ms,
-            local_ms,
-            drift_ms,
-            self.max_clock_error_ms,
-        )
+        self._transition_state("degraded", "force_refresh_failed")
+        self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
         return local_ms
 
 
@@ -177,6 +223,8 @@ class SourceManager:
         kline_stale_ms: int | None = None,
         server_time_refresh_sec: int = 60,
         server_time_degraded_retry_sec: int = 10,
+        clock_refresh_cooldown_ms: int = 30000,
+        clock_degraded_ttl_ms: int = 60000,
     ) -> None:
         self.symbols = symbols
         self.datastore = datastore
@@ -212,6 +260,8 @@ class SourceManager:
             max_clock_error_ms=max_clock_error_ms,
             refresh_sec=server_time_refresh_sec,
             degraded_retry_sec=server_time_degraded_retry_sec,
+            refresh_cooldown_ms=clock_refresh_cooldown_ms,
+            degraded_ttl_ms=clock_degraded_ttl_ms,
         )
 
         self.datastore.set_mode(self._mode)
@@ -451,6 +501,12 @@ class SourceManager:
 
         now_ms = self.now_ms_corrected()
         clock_state = self._clock.state.state
+        if self._clock.state.last_force_refresh_local_ms is None:
+            last_force_refresh_age_ms: int | None = None
+            refresh_cooldown_remaining_ms = 0
+        else:
+            last_force_refresh_age_ms = max(0, int(time.time() * 1000) - self._clock.state.last_force_refresh_local_ms)
+            refresh_cooldown_remaining_ms = max(0, self._clock.refresh_cooldown_ms - last_force_refresh_age_ms)
         if self._clock.state.last_sync_local_ms is None:
             last_server_sync_age_ms: int | None = None
         else:
@@ -479,7 +535,7 @@ class SourceManager:
 
             price_size, kline_size = self.datastore.buffer_sizes(symbol)
             logging.info(
-                "health mode=%s symbol=%s now_ms_corrected=%d clock_skew_ms=%d clock_state=%s last_server_sync_age_ms=%s "
+                "health mode=%s symbol=%s now_ms_corrected=%d clock_skew_ms=%d clock_state=%s last_server_sync_age_ms=%s last_force_refresh_age_ms=%s refresh_cooldown_remaining_ms=%s "
                 "last_price_ts_ms=%s last_kline_close_ts_ms=%s last_kline_recv_ts_ms=%s funding_ts_ms=%s open_interest_ts_ms=%s "
                 "last_price_raw_age_ms=%s last_kline_close_raw_age_ms=%s last_kline_recv_raw_age_ms=%s funding_raw_age_ms=%s oi_raw_age_ms=%s "
                 "last_price_age_seconds=%s last_kline_age_seconds=%s last_kline_recv_age_seconds=%s funding_age_seconds=%s oi_age_seconds=%s "
@@ -490,6 +546,8 @@ class SourceManager:
                 self._clock.state.clock_skew_ms,
                 clock_state,
                 self._fmt_int(last_server_sync_age_ms),
+                self._fmt_int(last_force_refresh_age_ms),
+                self._fmt_int(refresh_cooldown_remaining_ms),
                 self._fmt_int(fields["last_price"]),
                 self._fmt_int(fields["last_kline_close"]),
                 self._fmt_int(fields["last_kline_recv"]),

@@ -57,6 +57,8 @@ def test_clock_sync_does_not_reuse_stale_server_ms_on_failure() -> None:
         max_clock_error_ms=1,
         refresh_sec=60,
         degraded_retry_sec=10,
+        refresh_cooldown_ms=30_000,
+        degraded_ttl_ms=60_000,
     )
 
     assert clock.refresh_server_time(force=True)
@@ -80,6 +82,8 @@ def test_clock_sync_recovers_after_success() -> None:
         max_clock_error_ms=1000,
         refresh_sec=60,
         degraded_retry_sec=10,
+        refresh_cooldown_ms=30_000,
+        degraded_ttl_ms=60_000,
     )
 
     assert clock.refresh_server_time(force=True) is False
@@ -91,3 +95,55 @@ def test_clock_sync_recovers_after_success() -> None:
 
     now_ms = clock.now_ms()
     assert abs(now_ms - 1_800_000_000_000) < 5000
+
+
+class AdvancingClock:
+    def __init__(self, start_ms: int) -> None:
+        self.current_ms = start_ms
+
+    def set_ms(self, value: int) -> None:
+        self.current_ms = value
+
+    def time(self) -> float:
+        return self.current_ms / 1000
+
+    def monotonic(self) -> float:
+        return self.current_ms / 1000
+
+    def perf_counter(self) -> float:
+        return self.current_ms / 1000
+
+
+def test_clock_cooldown_limits_force_refresh_calls(monkeypatch) -> None:
+    from dark_alpha_phase_one.data import source_manager as sm
+
+    fake_clock = AdvancingClock(start_ms=1_000_000)
+    rest = SequenceRestClient([1_000_000, 1_000_000, 1_000_000])
+    clock = ClockSync(
+        rest_client=rest,
+        max_clock_error_ms=1_000,
+        refresh_sec=9999,
+        degraded_retry_sec=9999,
+        refresh_cooldown_ms=30_000,
+        degraded_ttl_ms=60_000,
+    )
+
+    monkeypatch.setattr(sm.time, "time", fake_clock.time)
+    monkeypatch.setattr(sm.time, "monotonic", fake_clock.monotonic)
+    monkeypatch.setattr(sm.time, "perf_counter", fake_clock.perf_counter)
+
+    assert clock.refresh_server_time(force=True)
+    assert rest.calls == 1
+
+    fake_clock.set_ms(1_020_000)
+    _ = clock.now_ms()
+    assert rest.calls == 2  # one force refresh at first fallback
+
+    fake_clock.set_ms(1_025_000)
+    _ = clock.now_ms()
+    assert rest.calls == 2  # blocked by cooldown, no extra refresh
+    assert clock.state.state == "degraded"
+
+    fake_clock.set_ms(1_051_000)
+    _ = clock.now_ms()
+    assert rest.calls == 3  # cooldown elapsed, refresh allowed

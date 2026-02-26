@@ -135,9 +135,11 @@ pytest -q
 - `OI_STALE_SECONDS=30`
 - `FUNDING_STALE_MS=180000`
 - `OI_STALE_MS=30000`
-- `MAX_CLOCK_ERROR_MS=1000`（clock sanity check 容忍誤差）
+- `MAX_CLOCK_ERROR_MS=5000`（clock sanity check 容忍誤差）
 - `SERVER_TIME_REFRESH_SEC=60`（正常同步週期）
 - `SERVER_TIME_DEGRADED_RETRY_SEC=10`（degraded 狀態重試週期）
+- `CLOCK_REFRESH_COOLDOWN_MS=30000`（clock_sanity_fallback 觸發 force refresh 的最短間隔）
+- `CLOCK_DEGRADED_TTL_MS=60000`（進入 degraded 後至少維持時間）
 
 > funding/OI 若過舊，服務會跳過提案卡生成。
 

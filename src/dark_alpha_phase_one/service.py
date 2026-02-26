@@ -140,6 +140,8 @@ class SignalService:
             kline_stale_ms=settings.kline_stale_ms,
             server_time_refresh_sec=settings.server_time_refresh_sec,
             server_time_degraded_retry_sec=settings.server_time_degraded_retry_sec,
+            clock_refresh_cooldown_ms=settings.clock_refresh_cooldown_ms,
+            clock_degraded_ttl_ms=settings.clock_degraded_ttl_ms,
         )
         self.telegram_notifier = TelegramNotifier(
             bot_token=settings.telegram_bot_token,
