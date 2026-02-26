@@ -49,3 +49,7 @@ class BinanceRestDataClient:
         payload = self._client.get_open_interest(symbol)
         ts = datetime.now(tz=timezone.utc)
         return float(payload["openInterest"]), ts
+
+    def fetch_server_time_ms(self) -> int:
+        return self._client.get_server_time_ms()
+

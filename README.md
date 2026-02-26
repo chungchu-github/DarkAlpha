@@ -114,6 +114,7 @@ pytest -q
 
 ### 5.3 資料來源與回切
 
+- `KLINE_LIMIT=500`（建議至少 210，避免 ATR warmup 不足）
 - `DATA_SOURCE_PREFERRED=ws`
 - `STALE_SECONDS=5`
 - `KLINE_STALE_SECONDS=30`
@@ -122,7 +123,7 @@ pytest -q
 - `REST_PRICE_POLL_SECONDS=1`
 - `REST_KLINE_POLL_SECONDS=10`
 - `WS_RECOVER_GOOD_TICKS=3`
-- `STATE_SYNC_KLINES=120`
+- `STATE_SYNC_KLINES=500`
 
 ### 5.4 衍生品資料輪詢與 stale gating
 

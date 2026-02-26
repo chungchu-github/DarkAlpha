@@ -12,6 +12,9 @@ class FakeRestClient:
     def __init__(self) -> None:
         self.kline_calls = 0
 
+    def fetch_server_time_ms(self) -> int:
+        return int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+
     def fetch_price(self, symbol: str):
         return 100.0, datetime.now(tz=timezone.utc)
 
@@ -206,3 +209,12 @@ def test_derivatives_are_polled_and_stored() -> None:
     assert snapshot.next_funding_time_ms == 1700000000000
     assert snapshot.open_interest == 12345.0
     assert len(snapshot.funding_rate_history) == 1
+
+
+def test_age_seconds_is_clamped_for_future_timestamp() -> None:
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    future = now + timedelta(milliseconds=300)
+
+    age = SourceManager._age_seconds(now, future)
+
+    assert age == 0.0

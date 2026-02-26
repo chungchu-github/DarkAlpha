@@ -20,6 +20,8 @@ class RestClientProtocol(Protocol):
 
     def fetch_open_interest(self, symbol: str): ...
 
+    def fetch_server_time_ms(self) -> int: ...
+
 
 class WsClientProtocol(Protocol):
     connected: bool
@@ -81,11 +83,32 @@ class SourceManager:
         self._last_health_log = 0.0
         self._ws_backoff = ws_backoff_min
         self._ws_next_retry_at = 0.0
+        self._clock_skew_ms = 0
 
         self.datastore.set_mode(self._mode)
+        self._init_clock_skew()
         self._safe_state_sync(reason="bootstrap")
         if self._mode == "ws":
             self._connect_ws(initial=True)
+
+    def _init_clock_skew(self) -> None:
+        local_ms = int(time.time() * 1000)
+        try:
+            server_ms = self.rest_client.fetch_server_time_ms()
+            self._clock_skew_ms = server_ms - local_ms
+            logging.info(
+                "Clock sync established server_ms=%d local_ms=%d clock_skew_ms=%d",
+                server_ms,
+                local_ms,
+                self._clock_skew_ms,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._clock_skew_ms = 0
+            logging.warning("Clock sync failed, using local clock only: %s", exc)
+
+    def _corrected_now(self) -> datetime:
+        corrected_ms = int(time.time() * 1000) + self._clock_skew_ms
+        return datetime.fromtimestamp(corrected_ms / 1000, tz=timezone.utc)
 
     def _connect_ws(self, *, initial: bool = False) -> None:
         try:
@@ -103,7 +126,7 @@ class SourceManager:
         return self._mode
 
     def refresh(self) -> None:
-        now = datetime.now(tz=timezone.utc)
+        now = self._corrected_now()
         now_mono = time.monotonic()
 
         self._attempt_ws_events()
@@ -129,11 +152,11 @@ class SourceManager:
 
     def _apply_ws_events(self, ticks: list, kline_ticks: list) -> int:
         fresh_ticks = 0
-        now = datetime.now(tz=timezone.utc)
+        now = self._corrected_now()
         for tick in ticks:
             self.datastore.update_price(tick.symbol, tick.price, tick.ts)
-            age = (now - tick.ts).total_seconds()
-            if age <= self.stale_seconds:
+            age = self._age_seconds(now, tick.ts)
+            if age is not None and age <= self.stale_seconds:
                 fresh_ticks += 1
         for kline_tick in kline_ticks:
             self.datastore.upsert_ws_kline(
@@ -272,6 +295,7 @@ class SourceManager:
             return
         self._last_health_log = now_mono
 
+        now_ms_corrected = int(now.timestamp() * 1000)
         for symbol in self.symbols:
             snap = self.datastore.snapshot(symbol)
             price_age = self._age_seconds(now, snap.last_price_ts)
@@ -280,9 +304,18 @@ class SourceManager:
             oi_age = self._age_seconds(now, snap.open_interest_ts)
             price_size, kline_size = self.datastore.buffer_sizes(symbol)
             logging.info(
-                "health mode=%s symbol=%s last_price_age_seconds=%s last_kline_age_seconds=%s funding_age_seconds=%s oi_age_seconds=%s price_buffer=%d kline_buffer=%d",
+                "health mode=%s symbol=%s now_ms_corrected=%d clock_skew_ms=%d "
+                "last_price_ts_ms=%s last_kline_close_ts_ms=%s funding_ts_ms=%s open_interest_ts_ms=%s "
+                "last_price_age_seconds=%s last_kline_age_seconds=%s funding_age_seconds=%s oi_age_seconds=%s "
+                "price_buffer=%d kline_buffer=%d",
                 self._mode,
                 symbol,
+                now_ms_corrected,
+                self._clock_skew_ms,
+                self._to_ms(snap.last_price_ts),
+                self._to_ms(snap.last_kline_close_ts),
+                self._to_ms(snap.funding_ts),
+                self._to_ms(snap.open_interest_ts),
                 "na" if price_age is None else f"{price_age:.1f}",
                 "na" if kline_age is None else f"{kline_age:.1f}",
                 "na" if funding_age is None else f"{funding_age:.1f}",
@@ -292,7 +325,20 @@ class SourceManager:
             )
 
     @staticmethod
+    def _to_ms(ts: datetime | None) -> str:
+        if ts is None:
+            return "na"
+        return str(int(ts.timestamp() * 1000))
+
+    @staticmethod
     def _age_seconds(now: datetime, ts: datetime | None) -> float | None:
         if ts is None:
             return None
-        return (now - ts).total_seconds()
+        age = (now - ts).total_seconds()
+        if age < 0:
+            if age > -0.5:
+                logging.debug("Clamping tiny negative age_seconds %.3f to 0", age)
+            else:
+                logging.debug("Clamping negative age_seconds %.3f to 0 (possible clock skew)", age)
+            return 0.0
+        return age

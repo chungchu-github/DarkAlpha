@@ -33,3 +33,15 @@ def test_calculate_position_usdt() -> None:
     max_risk = 10.0
     result = calculate_position_usdt(entry=entry, stop=stop, max_risk_usdt=max_risk)
     assert round(result, 6) == round(10 / (1.2 / 100), 6)
+
+
+def test_atr_series_has_values_with_sufficient_warmup() -> None:
+    candles = []
+    for i in range(45):
+        base = 100 + (i * 0.5)
+        candles.append(Candle(open=base, high=base + 1.2, low=base - 0.8, close=base + 0.3))
+
+    atr_values = atr_series(candles, period=14)
+
+    assert atr_values
+    assert atr_values[-1] > 0

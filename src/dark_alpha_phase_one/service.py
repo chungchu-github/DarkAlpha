@@ -13,6 +13,10 @@ from .calculations import (
     compute_oi_delta_pct_15m,
     compute_oi_zscore_15m,
 )
+
+ATR_PERIOD_15M = 14
+ATR_WINDOW_MINUTES = 15
+MIN_1M_BARS_FOR_ATR = ATR_WINDOW_MINUTES * ATR_PERIOD_15M
 from .config import Settings
 from .data.binance_rest import BinanceRestDataClient
 from .data.binance_ws import BinanceWsClient
@@ -43,8 +47,8 @@ def build_signal_context(
 ) -> SignalContext | None:
     closes = [candle.close for candle in klines_1m]
     return_5m = calculate_return(closes, lookback_minutes=5)
-    candles_15m = aggregate_klines_to_window(klines_1m, window=15)
-    atr_values = atr_series(candles_15m, period=14)
+    candles_15m = aggregate_klines_to_window(klines_1m, window=ATR_WINDOW_MINUTES)
+    atr_values = atr_series(candles_15m, period=ATR_PERIOD_15M)
 
     if not atr_values:
         return None
@@ -89,6 +93,7 @@ def derivatives_are_fresh(snapshot: SymbolSnapshot, funding_stale_seconds: int, 
 class SignalService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._atr_warmup_logged_symbols: set[str] = set()
         self.datastore = DataStore(symbols=settings.symbols)
         self.source_manager = SourceManager(
             symbols=settings.symbols,
@@ -178,6 +183,19 @@ class SignalService:
             logging.info("Derivatives missing for %s, skip card generation", symbol)
             return None
 
+        atr_need_bars_1m = MIN_1M_BARS_FOR_ATR
+        if len(snapshot.klines_1m) < atr_need_bars_1m:
+            if symbol not in self._atr_warmup_logged_symbols:
+                logging.info(
+                    "ATR warmup for %s: have_1m_bars=%d need_1m_bars=%d period_15m=%d timeframe=1m->15m",
+                    symbol,
+                    len(snapshot.klines_1m),
+                    atr_need_bars_1m,
+                    ATR_PERIOD_15M,
+                )
+                self._atr_warmup_logged_symbols.add(symbol)
+            return None
+
         signal_context = build_signal_context(
             symbol=symbol,
             price=snapshot.price,
@@ -189,8 +207,16 @@ class SignalService:
             last_kline_close_ts=snapshot.last_kline_close_ts,
         )
         if signal_context is None:
-            logging.warning("Not enough data to compute ATR for %s", symbol)
+            logging.warning(
+                "Not enough data to compute ATR for %s (have_1m_bars=%d need_1m_bars=%d period_15m=%d timeframe=1m->15m)",
+                symbol,
+                len(snapshot.klines_1m),
+                atr_need_bars_1m,
+                ATR_PERIOD_15M,
+            )
             return None
+
+        self._atr_warmup_logged_symbols.discard(symbol)
 
         candidates = self._collect_strategy_cards(signal_context)
         card = self.arbitrator.choose_best(candidates, signal_context)

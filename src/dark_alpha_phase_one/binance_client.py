@@ -61,3 +61,8 @@ class BinanceFuturesClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def get_server_time_ms(self) -> int:
+        resp = self.session.get(f"{self.base_url}/fapi/v1/time", timeout=10)
+        resp.raise_for_status()
+        return int(resp.json()["serverTime"])
