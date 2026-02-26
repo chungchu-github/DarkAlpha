@@ -66,12 +66,27 @@ class RiskEngine:
         state["last_trigger_by_symbol"][symbol] = now.isoformat()
         self._save_state(state)
 
+
+    def get_last_trigger_time(self, symbol: str) -> datetime | None:
+        state = self._load_state()
+        raw = state["last_trigger_by_symbol"].get(symbol)
+        if not raw:
+            return None
+        return self._parse_timestamp(raw)
+
     def _cooldown_until(self, symbol: str, state: dict[str, object]) -> datetime | None:
         raw = state["last_trigger_by_symbol"].get(symbol)
         if not raw:
             return None
-        last_trigger = datetime.fromisoformat(raw)
+        last_trigger = self._parse_timestamp(raw)
         return last_trigger + timedelta(minutes=self.cooldown_after_trigger_minutes)
+
+
+    def _parse_timestamp(self, raw: str) -> datetime:
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     def _resolve_realized_loss(self, date_key: str, day_state: dict[str, object]) -> float:
         if not self.pnl_csv_path or not self.pnl_csv_path.exists():

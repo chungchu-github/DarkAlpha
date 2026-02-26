@@ -4,16 +4,28 @@ from datetime import datetime, timezone
 import logging
 import time
 
-from .calculations import Candle, aggregate_klines_to_window, atr_series, calculate_return
+from .calculations import (
+    Candle,
+    aggregate_klines_to_window,
+    aggregate_oi_to_15m,
+    atr_series,
+    calculate_return,
+    compute_oi_delta_pct_15m,
+    compute_oi_zscore_15m,
+)
 from .config import Settings
 from .data.binance_rest import BinanceRestDataClient
 from .data.binance_ws import BinanceWsClient
-from .data.datastore import DataStore
+from .data.datastore import DataStore, SymbolSnapshot
 from .data.source_manager import SourceManager
+from .engine.arbitrator import Arbitrator, ArbitratorConfig
 from .engine.signal_context import SignalContext
 from .models import ProposalCard
 from .risk_engine import RiskEngine
 from .strategies.base import Strategy
+from .strategies.fake_breakout_reversal import FakeBreakoutReversalStrategy
+from .strategies.funding_oi_skew import FundingOiSkewStrategy
+from .strategies.liquidation_follow import LiquidationFollowStrategy
 from .strategies.vol_breakout import VolBreakoutStrategy
 from .telegram_client import TelegramNotifier
 
@@ -23,6 +35,11 @@ def build_signal_context(
     symbol: str,
     price: float,
     klines_1m: list[Candle],
+    funding_rate: float,
+    open_interest: float,
+    mark_price: float,
+    open_interest_series: list[tuple[datetime, float]],
+    last_kline_close_ts: datetime | None,
 ) -> SignalContext | None:
     closes = [candle.close for candle in klines_1m]
     return_5m = calculate_return(closes, lookback_minutes=5)
@@ -39,6 +56,10 @@ def build_signal_context(
     else:
         atr_baseline = sum(atr_values[-(baseline_window + 1) : -1]) / baseline_window
 
+    oi_15m_windows = aggregate_oi_to_15m(open_interest_series)
+    oi_zscore = compute_oi_zscore_15m(oi_15m_windows, baseline_windows=96)
+    oi_delta = compute_oi_delta_pct_15m(oi_15m_windows)
+
     return SignalContext(
         symbol=symbol,
         timestamp=datetime.now(tz=timezone.utc),
@@ -47,47 +68,22 @@ def build_signal_context(
         return_5m=return_5m,
         atr_15m=atr_15m,
         atr_15m_baseline=atr_baseline,
-import logging
-import time
-
-from .binance_client import BinanceFuturesClient
-from .calculations import (
-    aggregate_klines_to_window,
-    atr_series,
-    calculate_position_usdt,
-    calculate_return,
-)
-from .config import Settings
-from .models import ProposalCard
-from .telegram_client import TelegramNotifier
-
-
-def build_proposal_card(
-    *,
-    symbol: str,
-    entry: float,
-    return_5m: float,
-    atr_15m: float,
-    leverage_suggest: int,
-    max_risk_usdt: float,
-    ttl_minutes: int,
-    rationale: str,
-) -> ProposalCard:
-    side = "LONG" if return_5m >= 0 else "SHORT"
-    stop = entry - (1.2 * atr_15m) if side == "LONG" else entry + (1.2 * atr_15m)
-    position_usdt = calculate_position_usdt(entry=entry, stop=stop, max_risk_usdt=max_risk_usdt)
-
-    return ProposalCard.create(
-        symbol=symbol,
-        side=side,
-        entry=entry,
-        stop=stop,
-        leverage_suggest=leverage_suggest,
-        position_usdt=position_usdt,
-        max_risk_usdt=max_risk_usdt,
-        ttl_minutes=ttl_minutes,
-        rationale=rationale,
+        funding_rate=funding_rate,
+        open_interest=open_interest,
+        mark_price=mark_price,
+        open_interest_zscore_15m=oi_zscore,
+        open_interest_delta_15m=oi_delta,
+        last_kline_close_ts=last_kline_close_ts,
     )
+
+
+def derivatives_are_fresh(snapshot: SymbolSnapshot, funding_stale_seconds: int, oi_stale_seconds: int) -> bool:
+    now = datetime.now(tz=timezone.utc)
+    if snapshot.funding_ts is None or snapshot.open_interest_ts is None:
+        return False
+    funding_age = (now - snapshot.funding_ts).total_seconds()
+    oi_age = (now - snapshot.open_interest_ts).total_seconds()
+    return funding_age <= funding_stale_seconds and oi_age <= oi_stale_seconds
 
 
 class SignalService:
@@ -108,8 +104,10 @@ class SignalService:
             rest_kline_poll_seconds=settings.rest_kline_poll_seconds,
             ws_recover_good_ticks=settings.ws_recover_good_ticks,
             state_sync_klines=settings.state_sync_klines,
+            premiumindex_poll_seconds=settings.premiumindex_poll_seconds,
+            funding_poll_seconds=settings.funding_poll_seconds,
+            oi_poll_seconds=settings.oi_poll_seconds,
         )
-        self.binance_client = BinanceFuturesClient()
         self.telegram_notifier = TelegramNotifier(
             bot_token=settings.telegram_bot_token,
             chat_id=settings.telegram_chat_id,
@@ -122,14 +120,48 @@ class SignalService:
             kill_switch=settings.kill_switch,
             pnl_csv_path=settings.pnl_csv_path,
         )
+        self.arbitrator = Arbitrator(
+            ArbitratorConfig(
+                dedupe_window_seconds=settings.dedupe_window_seconds,
+                entry_similar_pct=settings.entry_similar_pct,
+                stop_similar_pct=settings.stop_similar_pct,
+            ),
+            last_sent_lookup=self.risk_engine.get_last_trigger_time,
+        )
         self.strategies: list[Strategy] = [
+            FakeBreakoutReversalStrategy(
+                sweep_pct=settings.sweep_pct,
+                wick_body_ratio=settings.wick_body_ratio,
+                stop_buffer_atr=settings.stop_buffer_atr,
+                min_atr_pct=settings.min_atr_pct,
+                leverage_suggest=50,
+                max_risk_usdt=settings.max_risk_usdt,
+                ttl_minutes=5,
+                priority=settings.priority_fake_breakout,
+            ),
+            FundingOiSkewStrategy(
+                funding_extreme=settings.funding_extreme,
+                oi_zscore_threshold=settings.oi_zscore,
+                leverage_suggest=35,
+                max_risk_usdt=settings.max_risk_usdt,
+                ttl_minutes=12,
+                priority=settings.priority_funding_oi_skew,
+            ),
+            LiquidationFollowStrategy(
+                oi_delta_pct_threshold=settings.oi_delta_pct,
+                leverage_suggest=30,
+                max_risk_usdt=settings.max_risk_usdt,
+                ttl_minutes=10,
+                priority=settings.priority_liquidation_follow,
+            ),
             VolBreakoutStrategy(
                 return_threshold=settings.return_threshold,
                 atr_spike_multiplier=settings.atr_spike_multiplier,
                 leverage_suggest=settings.leverage_suggest,
                 max_risk_usdt=settings.max_risk_usdt,
                 ttl_minutes=settings.ttl_minutes,
-            )
+                priority=settings.priority_vol_breakout,
+            ),
         ]
 
     def evaluate_symbol(self, symbol: str) -> ProposalCard | None:
@@ -138,22 +170,30 @@ class SignalService:
             logging.debug("Data not ready for %s in mode=%s", symbol, snapshot.data_source_mode)
             return None
 
-        signal_context = build_signal_context(symbol=symbol, price=snapshot.price, klines_1m=snapshot.klines_1m)
+        if not derivatives_are_fresh(snapshot, self.settings.funding_stale_seconds, self.settings.oi_stale_seconds):
+            logging.info("Derivatives stale for %s, skip card generation", symbol)
+            return None
+
+        if snapshot.last_funding_rate is None or snapshot.open_interest is None or snapshot.mark_price is None:
+            logging.info("Derivatives missing for %s, skip card generation", symbol)
+            return None
+
+        signal_context = build_signal_context(
+            symbol=symbol,
+            price=snapshot.price,
+            klines_1m=snapshot.klines_1m,
+            funding_rate=snapshot.last_funding_rate,
+            open_interest=snapshot.open_interest,
+            mark_price=snapshot.mark_price,
+            open_interest_series=snapshot.open_interest_series,
+            last_kline_close_ts=snapshot.last_kline_close_ts,
+        )
         if signal_context is None:
             logging.warning("Not enough data to compute ATR for %s", symbol)
             return None
 
-        logging.info(
-            "%s metrics | mode=%s price=%.3f return_5m=%.4f atr_15m=%.4f atr_baseline=%.4f",
-            symbol,
-            snapshot.data_source_mode,
-            signal_context.price,
-            signal_context.return_5m,
-            signal_context.atr_15m,
-            signal_context.atr_15m_baseline,
-        )
-
-        card = self._run_strategies(signal_context)
+        candidates = self._collect_strategy_cards(signal_context)
+        card = self.arbitrator.choose_best(candidates, signal_context)
         if card is None:
             return None
 
@@ -165,13 +205,13 @@ class SignalService:
         self.risk_engine.record_trigger(symbol)
         return card
 
-    def _run_strategies(self, signal_context: SignalContext) -> ProposalCard | None:
+    def _collect_strategy_cards(self, signal_context: SignalContext) -> list[ProposalCard]:
+        cards: list[ProposalCard] = []
         for strategy in self.strategies:
             card = strategy.generate(signal_context)
             if card is not None:
-                logging.info("%s selected by strategy %s", signal_context.symbol, strategy.name)
-                return card
-        return None
+                cards.append(card)
+        return cards
 
     def run_forever(self) -> None:
         logging.info("Starting signal service for symbols: %s", self.settings.symbols)
@@ -184,66 +224,4 @@ class SignalService:
                         self.telegram_notifier.send_json_card(card.to_dict())
             except Exception as exc:  # noqa: BLE001
                 logging.exception("Main loop error (service continues): %s", exc)
-
-    def evaluate_symbol(self, symbol: str) -> ProposalCard | None:
-        price = self.binance_client.get_latest_price(symbol)
-        klines_1m = self.binance_client.get_1m_klines(symbol, limit=self.settings.kline_limit)
-        closes = [candle.close for candle in klines_1m]
-
-        return_5m = calculate_return(closes, lookback_minutes=5)
-        candles_15m = aggregate_klines_to_window(klines_1m, window=15)
-        atr_values = atr_series(candles_15m, period=14)
-
-        if not atr_values:
-            logging.warning("Not enough data to compute ATR for %s", symbol)
-            return None
-
-        atr_latest = atr_values[-1]
-        baseline_window = min(96, len(atr_values) - 1)
-        if baseline_window <= 0:
-            atr_baseline = atr_latest
-        else:
-            atr_baseline = sum(atr_values[-(baseline_window + 1) : -1]) / baseline_window
-
-        return_trigger = abs(return_5m) > self.settings.return_threshold
-        atr_trigger = atr_latest > (atr_baseline * self.settings.atr_spike_multiplier)
-
-        logging.info(
-            "%s metrics | price=%.3f return_5m=%.4f atr_15m=%.4f atr_baseline=%.4f",
-            symbol,
-            price,
-            return_5m,
-            atr_latest,
-            atr_baseline,
-        )
-
-        if not (return_trigger or atr_trigger):
-            return None
-
-        rationale = (
-            f"triggered: return_5m={return_5m:.4%} (th={self.settings.return_threshold:.2%}), "
-            f"atr_15m={atr_latest:.4f} vs baseline={atr_baseline:.4f}"
-        )
-        card = build_proposal_card(
-            symbol=symbol,
-            entry=price,
-            return_5m=return_5m,
-            atr_15m=atr_latest,
-            leverage_suggest=self.settings.leverage_suggest,
-            max_risk_usdt=self.settings.max_risk_usdt,
-            ttl_minutes=self.settings.ttl_minutes,
-            rationale=rationale,
-        )
-        return card
-
-    def run_forever(self) -> None:
-        logging.info("Starting signal service for symbols: %s", self.settings.symbols)
-        while True:
-            for symbol in self.settings.symbols:
-                try:
-                    card = self.evaluate_symbol(symbol)
-                    if card is not None:
-                        self.telegram_notifier.send_json_card(card.to_dict())
-                except Exception as exc:  # noqa: BLE001
-                    logging.exception("Failed to evaluate symbol %s: %s", symbol, exc)
             time.sleep(self.settings.poll_seconds)

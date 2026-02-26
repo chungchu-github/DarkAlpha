@@ -15,6 +15,7 @@ class VolBreakoutStrategy(Strategy):
     leverage_suggest: int
     max_risk_usdt: float
     ttl_minutes: int
+    priority: int = 0
     name: str = "vol_breakout_card"
 
     def generate(self, signal_context: SignalContext) -> ProposalCard | None:
@@ -34,6 +35,9 @@ class VolBreakoutStrategy(Strategy):
             stop=stop,
             max_risk_usdt=self.max_risk_usdt,
         )
+        score_return = abs(signal_context.return_5m) / max(self.return_threshold, 1e-9)
+        score_atr = signal_context.atr_15m / max(signal_context.atr_15m_baseline, 1e-9)
+        confidence = min(100.0, 40.0 + (score_return * 20.0) + (score_atr * 10.0))
 
         rationale = (
             f"triggered: return_5m={signal_context.return_5m:.4%} (th={self.return_threshold:.2%}), "
@@ -49,4 +53,7 @@ class VolBreakoutStrategy(Strategy):
             max_risk_usdt=self.max_risk_usdt,
             ttl_minutes=self.ttl_minutes,
             rationale=rationale,
+            strategy=self.name,
+            priority=self.priority,
+            confidence=confidence,
         )

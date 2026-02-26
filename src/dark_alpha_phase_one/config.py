@@ -35,6 +35,25 @@ class Settings:
     rest_kline_poll_seconds: float
     ws_recover_good_ticks: int
     state_sync_klines: int
+    funding_poll_seconds: float
+    premiumindex_poll_seconds: float
+    oi_poll_seconds: float
+    funding_stale_seconds: int
+    oi_stale_seconds: int
+    funding_extreme: float
+    oi_zscore: float
+    oi_delta_pct: float
+    sweep_pct: float
+    wick_body_ratio: float
+    stop_buffer_atr: float
+    min_atr_pct: float
+    dedupe_window_seconds: int
+    entry_similar_pct: float
+    stop_similar_pct: float
+    priority_fake_breakout: int
+    priority_funding_oi_skew: int
+    priority_liquidation_follow: int
+    priority_vol_breakout: int
 
 
 def load_settings() -> Settings:
@@ -69,4 +88,23 @@ def load_settings() -> Settings:
         rest_kline_poll_seconds=float(os.getenv("REST_KLINE_POLL_SECONDS", "10")),
         ws_recover_good_ticks=int(os.getenv("WS_RECOVER_GOOD_TICKS", "3")),
         state_sync_klines=int(os.getenv("STATE_SYNC_KLINES", "120")),
+        funding_poll_seconds=float(os.getenv("FUNDING_POLL_SECONDS", "60")),
+        premiumindex_poll_seconds=float(os.getenv("PREMIUMINDEX_POLL_SECONDS", "10")),
+        oi_poll_seconds=float(os.getenv("OI_POLL_SECONDS", "10")),
+        funding_stale_seconds=int(os.getenv("FUNDING_STALE_SECONDS", "180")),
+        oi_stale_seconds=int(os.getenv("OI_STALE_SECONDS", "30")),
+        funding_extreme=float(os.getenv("FUNDING_EXTREME", "0.0005")),
+        oi_zscore=float(os.getenv("OI_ZSCORE", "2.0")),
+        oi_delta_pct=float(os.getenv("OI_DELTA_PCT", "0.10")),
+        sweep_pct=float(os.getenv("SWEEP_PCT", "0.001")),
+        wick_body_ratio=float(os.getenv("WICK_BODY_RATIO", "2.0")),
+        stop_buffer_atr=float(os.getenv("STOP_BUFFER_ATR", "0.3")),
+        min_atr_pct=float(os.getenv("MIN_ATR_PCT", "0.001")),
+        dedupe_window_seconds=int(os.getenv("DEDUPE_WINDOW_SECONDS", "300")),
+        entry_similar_pct=float(os.getenv("ENTRY_SIMILAR_PCT", "0.001")),
+        stop_similar_pct=float(os.getenv("STOP_SIMILAR_PCT", "0.001")),
+        priority_fake_breakout=int(os.getenv("PRIORITY_FAKE_BREAKOUT", "100")),
+        priority_funding_oi_skew=int(os.getenv("PRIORITY_FUNDING_OI_SKEW", "80")),
+        priority_liquidation_follow=int(os.getenv("PRIORITY_LIQUIDATION_FOLLOW", "60")),
+        priority_vol_breakout=int(os.getenv("PRIORITY_VOL_BREAKOUT", "40")),
     )

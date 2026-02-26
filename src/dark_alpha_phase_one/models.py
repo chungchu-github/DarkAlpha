@@ -17,6 +17,8 @@ class ProposalCard:
     ttl_minutes: int
     rationale: str
     created_at: str
+    priority: int
+    confidence: float
 
     @classmethod
     def create(
@@ -31,10 +33,13 @@ class ProposalCard:
         max_risk_usdt: float,
         ttl_minutes: int,
         rationale: str,
+        strategy: str = "vol_breakout_card",
+        priority: int = 0,
+        confidence: float = 0.0,
     ) -> "ProposalCard":
         return cls(
             symbol=symbol,
-            strategy="vol_breakout_card",
+            strategy=strategy,
             side=side,
             entry=entry,
             stop=stop,
@@ -44,6 +49,8 @@ class ProposalCard:
             ttl_minutes=ttl_minutes,
             rationale=rationale,
             created_at=datetime.now(tz=timezone.utc).isoformat(),
+            priority=priority,
+            confidence=confidence,
         )
 
     def to_dict(self) -> dict[str, object]:

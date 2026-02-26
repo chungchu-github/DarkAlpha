@@ -16,6 +16,12 @@ def _context(return_5m: float, atr_15m: float, baseline: float) -> SignalContext
         return_5m=return_5m,
         atr_15m=atr_15m,
         atr_15m_baseline=baseline,
+        funding_rate=0.0001,
+        open_interest=1000.0,
+        mark_price=100.1,
+        open_interest_zscore_15m=1.0,
+        open_interest_delta_15m=0.05,
+        last_kline_close_ts=datetime(2026, 2, 25, 11, 59, tzinfo=timezone.utc),
     )
 
 

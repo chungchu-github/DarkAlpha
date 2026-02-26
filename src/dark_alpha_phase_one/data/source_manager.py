@@ -11,14 +11,24 @@ from dark_alpha_phase_one.data.datastore import DataStore
 
 class RestClientProtocol(Protocol):
     def fetch_price(self, symbol: str): ...
+
     def fetch_klines(self, symbol: str, limit: int): ...
+
+    def fetch_premium_index(self, symbol: str): ...
+
+    def fetch_funding_rate_history(self, symbol: str, limit: int = 3): ...
+
+    def fetch_open_interest(self, symbol: str): ...
 
 
 class WsClientProtocol(Protocol):
     connected: bool
+
     def connect(self) -> None: ...
+
     def close(self) -> None: ...
-    def read_price_ticks(self) -> list: ...
+
+    def read_events(self) -> tuple[list, list]: ...
 
 
 class SourceManager:
@@ -38,6 +48,10 @@ class SourceManager:
         rest_kline_poll_seconds: float,
         ws_recover_good_ticks: int,
         state_sync_klines: int,
+        premiumindex_poll_seconds: float,
+        funding_poll_seconds: float,
+        oi_poll_seconds: float,
+        funding_history_limit: int = 3,
     ) -> None:
         self.symbols = symbols
         self.datastore = datastore
@@ -52,19 +66,26 @@ class SourceManager:
         self.rest_kline_poll_seconds = rest_kline_poll_seconds
         self.ws_recover_good_ticks = ws_recover_good_ticks
         self.state_sync_klines = state_sync_klines
+        self.premiumindex_poll_seconds = premiumindex_poll_seconds
+        self.funding_poll_seconds = funding_poll_seconds
+        self.oi_poll_seconds = oi_poll_seconds
+        self.funding_history_limit = funding_history_limit
 
         self._mode = "ws" if preferred_mode == "ws" else "rest"
         self._ws_good_ticks = 0
         self._last_rest_price_poll = 0.0
         self._last_rest_kline_poll = 0.0
+        self._last_premium_poll = 0.0
+        self._last_funding_poll = 0.0
+        self._last_oi_poll = 0.0
         self._last_health_log = 0.0
         self._ws_backoff = ws_backoff_min
         self._ws_next_retry_at = 0.0
 
         self.datastore.set_mode(self._mode)
+        self._safe_state_sync(reason="bootstrap")
         if self._mode == "ws":
             self._connect_ws(initial=True)
-
 
     def _connect_ws(self, *, initial: bool = False) -> None:
         try:
@@ -85,27 +106,81 @@ class SourceManager:
         now = datetime.now(tz=timezone.utc)
         now_mono = time.monotonic()
 
-        self._attempt_ws_ticks()
+        self._attempt_ws_events()
         self._evaluate_staleness(now)
-
-        self._poll_rest_klines(now_mono)
+        self._poll_derivatives(now_mono)
 
         if self._mode == "rest":
             self._poll_rest_prices(now_mono)
+            self._poll_rest_klines(now_mono)
             self._attempt_ws_recover(now_mono)
 
         self._log_health_if_needed(now_mono, now)
 
-    def _attempt_ws_ticks(self) -> None:
+    def _attempt_ws_events(self) -> None:
         if self._mode != "ws" or not self.ws_client.connected:
             return
         try:
-            ticks = self.ws_client.read_price_ticks()
-            for tick in ticks:
-                self.datastore.update_price(tick.symbol, tick.price, tick.ts)
+            ticks, kline_ticks = self.ws_client.read_events()
+            self._apply_ws_events(ticks, kline_ticks)
         except Exception as exc:  # noqa: BLE001
             self._switch_mode("rest", symbol="*", reason=f"exception:{exc}")
             self.ws_client.close()
+
+    def _apply_ws_events(self, ticks: list, kline_ticks: list) -> int:
+        fresh_ticks = 0
+        now = datetime.now(tz=timezone.utc)
+        for tick in ticks:
+            self.datastore.update_price(tick.symbol, tick.price, tick.ts)
+            age = (now - tick.ts).total_seconds()
+            if age <= self.stale_seconds:
+                fresh_ticks += 1
+        for kline_tick in kline_ticks:
+            self.datastore.upsert_ws_kline(
+                kline_tick.symbol,
+                kline_tick.candle,
+                kline_tick.open_time_ms,
+                kline_tick.is_closed,
+                kline_tick.ts,
+            )
+        return fresh_ticks
+
+    def _poll_derivatives(self, now_mono: float) -> None:
+        if now_mono - self._last_premium_poll >= self.premiumindex_poll_seconds:
+            for symbol in self.symbols:
+                try:
+                    mark, funding_rate, next_funding_ms, ts = self.rest_client.fetch_premium_index(symbol)
+                    self.datastore.update_premium_index(
+                        symbol,
+                        mark_price=mark,
+                        last_funding_rate=funding_rate,
+                        next_funding_time_ms=next_funding_ms,
+                        ts=ts,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning("premiumIndex poll failed for %s: %s", symbol, exc)
+            self._last_premium_poll = now_mono
+
+        if now_mono - self._last_funding_poll >= self.funding_poll_seconds:
+            for symbol in self.symbols:
+                try:
+                    history, ts = self.rest_client.fetch_funding_rate_history(
+                        symbol,
+                        limit=self.funding_history_limit,
+                    )
+                    self.datastore.update_funding_rate_history(symbol, history, ts)
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning("fundingRate poll failed for %s: %s", symbol, exc)
+            self._last_funding_poll = now_mono
+
+        if now_mono - self._last_oi_poll >= self.oi_poll_seconds:
+            for symbol in self.symbols:
+                try:
+                    oi, ts = self.rest_client.fetch_open_interest(symbol)
+                    self.datastore.update_open_interest(symbol, oi, ts)
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning("openInterest poll failed for %s: %s", symbol, exc)
+            self._last_oi_poll = now_mono
 
     def _poll_rest_prices(self, now_mono: float) -> None:
         if now_mono - self._last_rest_price_poll < self.rest_price_poll_seconds:
@@ -118,9 +193,7 @@ class SourceManager:
     def _poll_rest_klines(self, now_mono: float) -> None:
         if now_mono - self._last_rest_kline_poll < self.rest_kline_poll_seconds:
             return
-        for symbol in self.symbols:
-            klines, ts = self.rest_client.fetch_klines(symbol, limit=max(120, self.state_sync_klines))
-            self.datastore.merge_klines(symbol, klines, ts)
+        self._state_sync_from_rest(reason="rest_poll", limit=max(120, self.state_sync_klines))
         self._last_rest_kline_poll = now_mono
 
     def _attempt_ws_recover(self, now_mono: float) -> None:
@@ -140,7 +213,7 @@ class SourceManager:
                 return
 
         try:
-            ticks = self.ws_client.read_price_ticks()
+            ticks, kline_ticks = self.ws_client.read_events()
         except Exception as exc:  # noqa: BLE001
             self.ws_client.close()
             self._ws_next_retry_at = now_mono + self._ws_backoff
@@ -148,25 +221,26 @@ class SourceManager:
             logging.warning("WS recover read failed: %s", exc)
             return
 
-        fresh_ticks = 0
-        now = datetime.now(tz=timezone.utc)
-        for tick in ticks:
-            self.datastore.update_price(tick.symbol, tick.price, tick.ts)
-            age = (now - tick.ts).total_seconds()
-            if age <= self.stale_seconds:
-                fresh_ticks += 1
-
+        fresh_ticks = self._apply_ws_events(ticks, kline_ticks)
         if fresh_ticks > 0:
             self._ws_good_ticks += fresh_ticks
 
         if self._ws_good_ticks >= self.ws_recover_good_ticks:
-            self._state_sync_from_rest(reason="recovered")
-            self._switch_mode("ws", symbol="*", reason="recovered")
-            self._ws_good_ticks = 0
+            if self._safe_state_sync(reason="recovered"):
+                self._switch_mode("ws", symbol="*", reason="recovered")
+                self._ws_good_ticks = 0
 
-    def _state_sync_from_rest(self, reason: str) -> None:
+    def _safe_state_sync(self, reason: str) -> bool:
+        try:
+            self._state_sync_from_rest(reason=reason, limit=self.state_sync_klines)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("State sync failed (%s): %s", reason, exc)
+            return False
+
+    def _state_sync_from_rest(self, reason: str, limit: int) -> None:
         for symbol in self.symbols:
-            klines, ts = self.rest_client.fetch_klines(symbol, limit=self.state_sync_klines)
+            klines, ts = self.rest_client.fetch_klines(symbol, limit=limit)
             self.datastore.merge_klines(symbol, klines, ts)
             logging.info("State sync (%s) for %s with %d klines", reason, symbol, len(klines))
 
@@ -202,13 +276,17 @@ class SourceManager:
             snap = self.datastore.snapshot(symbol)
             price_age = self._age_seconds(now, snap.last_price_ts)
             kline_age = self._age_seconds(now, snap.last_kline_close_ts)
+            funding_age = self._age_seconds(now, snap.funding_ts)
+            oi_age = self._age_seconds(now, snap.open_interest_ts)
             price_size, kline_size = self.datastore.buffer_sizes(symbol)
             logging.info(
-                "health mode=%s symbol=%s last_price_age_seconds=%s last_kline_age_seconds=%s price_buffer=%d kline_buffer=%d",
+                "health mode=%s symbol=%s last_price_age_seconds=%s last_kline_age_seconds=%s funding_age_seconds=%s oi_age_seconds=%s price_buffer=%d kline_buffer=%d",
                 self._mode,
                 symbol,
                 "na" if price_age is None else f"{price_age:.1f}",
                 "na" if kline_age is None else f"{kline_age:.1f}",
+                "na" if funding_age is None else f"{funding_age:.1f}",
+                "na" if oi_age is None else f"{oi_age:.1f}",
                 price_size,
                 kline_size,
             )
