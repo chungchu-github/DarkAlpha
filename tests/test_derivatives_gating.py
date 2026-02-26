@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from dark_alpha_phase_one.calculations import Candle
 from dark_alpha_phase_one.data.datastore import FundingRatePoint, SymbolSnapshot
 from dark_alpha_phase_one.data.source_manager import SourceManager
-from dark_alpha_phase_one.service import derivatives_are_fresh
+from dark_alpha_phase_one.service import derivatives_are_fresh, should_emit_test
 
 
 def _snapshot(funding_ts: datetime | None, oi_ts: datetime | None) -> SymbolSnapshot:
@@ -75,3 +75,15 @@ def test_derivatives_gate_allows_oi_stale_with_status() -> None:
     )
     assert gate.allow
     assert gate.oi_status == "stale"
+
+
+def test_should_emit_test_allows_initial_emit() -> None:
+    assert should_emit_test(last_emit_ts=None, now_ts=1_000.0, interval_sec=60)
+
+
+def test_should_emit_test_blocks_emit_inside_interval() -> None:
+    assert not should_emit_test(last_emit_ts=1_000.0, now_ts=1_059.9, interval_sec=60)
+
+
+def test_should_emit_test_allows_emit_at_interval_boundary() -> None:
+    assert should_emit_test(last_emit_ts=1_000.0, now_ts=1_060.0, interval_sec=60)
