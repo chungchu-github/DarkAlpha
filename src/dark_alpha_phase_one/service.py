@@ -462,6 +462,7 @@ class SignalService:
 
                     started = time.perf_counter()
                     payload = card.to_dict()
+                    payload["trace_id"] = trace_id
                     logging.info("event=card_build_start run_id=%s trace_id=%s symbol=%s tf=%s", self.run_id, trace_id, symbol, self.settings.test_emit_tf)
                     build_start = time.perf_counter()
                     try:
@@ -496,6 +497,7 @@ class SignalService:
 
                     result = "success" if telegram_status == "sent" and postback_status == "sent" else ("partial" if telegram_status == "sent" or postback_status == "sent" else "fail")
                     logging.info("event=emit_pipeline_result run_id=%s trace_id=%s symbol=%s tf=%s result=%s card=true telegram=%s postback=%s total_ms=%d", self.run_id, trace_id, symbol, self.settings.test_emit_tf, result, telegram_status, postback_status, int((time.perf_counter() - started) * 1000))
+                self.telegram_notifier.poll_updates_once()
             except Exception as exc:  # noqa: BLE001
                 logging.exception("Main loop error (service continues): %s", exc)
             time.sleep(self.settings.poll_seconds)
