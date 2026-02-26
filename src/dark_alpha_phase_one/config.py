@@ -44,6 +44,8 @@ class Settings:
     funding_stale_ms: int
     oi_stale_ms: int
     max_clock_error_ms: int
+    server_time_refresh_sec: int
+    server_time_degraded_retry_sec: int
     funding_extreme: float
     oi_zscore: float
     oi_delta_pct: float
@@ -101,6 +103,8 @@ def load_settings() -> Settings:
         funding_stale_ms=int(os.getenv("FUNDING_STALE_MS", str(int(os.getenv("FUNDING_STALE_SECONDS", "180")) * 1000))),
         oi_stale_ms=int(os.getenv("OI_STALE_MS", str(int(os.getenv("OI_STALE_SECONDS", "30")) * 1000))),
         max_clock_error_ms=int(os.getenv("MAX_CLOCK_ERROR_MS", "1000")),
+        server_time_refresh_sec=int(os.getenv("SERVER_TIME_REFRESH_SEC", "60")),
+        server_time_degraded_retry_sec=int(os.getenv("SERVER_TIME_DEGRADED_RETRY_SEC", "10")),
         funding_extreme=float(os.getenv("FUNDING_EXTREME", "0.0005")),
         oi_zscore=float(os.getenv("OI_ZSCORE", "2.0")),
         oi_delta_pct=float(os.getenv("OI_DELTA_PCT", "0.10")),

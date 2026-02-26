@@ -1,8 +1,22 @@
 from __future__ import annotations
 
 import logging
+import time
 
-from dark_alpha_phase_one.data.source_manager import SourceManager
+from dark_alpha_phase_one.data.source_manager import ClockSync, SourceManager
+
+
+class SequenceRestClient:
+    def __init__(self, sequence: list[int | Exception]) -> None:
+        self.sequence = sequence
+        self.calls = 0
+
+    def fetch_server_time_ms(self) -> int:
+        item = self.sequence[min(self.calls, len(self.sequence) - 1)]
+        self.calls += 1
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 def test_clock_skew_and_corrected_now_match_server_direction() -> None:
@@ -34,3 +48,46 @@ def test_future_timestamp_warning_is_emitted(caplog) -> None:
 
     assert raw_age_ms == -2_000
     assert "timestamp_in_future" in caplog.text
+
+
+def test_clock_sync_does_not_reuse_stale_server_ms_on_failure() -> None:
+    rest = SequenceRestClient([1_700_000_000_000, RuntimeError("down")])
+    clock = ClockSync(
+        rest_client=rest,
+        max_clock_error_ms=1,
+        refresh_sec=60,
+        degraded_retry_sec=10,
+    )
+
+    assert clock.refresh_server_time(force=True)
+    assert clock.state.state == "synced"
+    assert clock.state.last_server_ms == 1_700_000_000_000
+
+    assert clock.refresh_server_time(force=True) is False
+    assert clock.state.state == "degraded"
+    assert clock.state.last_server_ms is None
+    assert clock.state.clock_skew_ms == 0
+
+    now_ms = clock.now_ms()
+    local_ms = int(time.time() * 1000)
+    assert abs(now_ms - local_ms) < 1000
+
+
+def test_clock_sync_recovers_after_success() -> None:
+    rest = SequenceRestClient([RuntimeError("down"), 1_800_000_000_000])
+    clock = ClockSync(
+        rest_client=rest,
+        max_clock_error_ms=1000,
+        refresh_sec=60,
+        degraded_retry_sec=10,
+    )
+
+    assert clock.refresh_server_time(force=True) is False
+    assert clock.state.state == "degraded"
+
+    assert clock.refresh_server_time(force=True)
+    assert clock.state.state == "synced"
+    assert clock.state.last_server_ms == 1_800_000_000_000
+
+    now_ms = clock.now_ms()
+    assert abs(now_ms - 1_800_000_000_000) < 5000

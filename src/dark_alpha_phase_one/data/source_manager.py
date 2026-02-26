@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 import time
@@ -32,6 +33,125 @@ class WsClientProtocol(Protocol):
     def read_events(self) -> tuple[list, list]: ...
 
 
+@dataclass
+class ClockSyncState:
+    clock_skew_ms: int = 0
+    last_server_ms: int | None = None
+    last_sync_local_ms: int | None = None
+    state: str = "degraded"
+
+
+class ClockSync:
+    def __init__(
+        self,
+        *,
+        rest_client: RestClientProtocol,
+        max_clock_error_ms: int,
+        refresh_sec: int,
+        degraded_retry_sec: int,
+    ) -> None:
+        self.rest_client = rest_client
+        self.max_clock_error_ms = max_clock_error_ms
+        self.refresh_sec = refresh_sec
+        self.degraded_retry_sec = degraded_retry_sec
+        self.state = ClockSyncState()
+        self._next_refresh_mono = 0.0
+
+    @staticmethod
+    def compute_clock_skew_ms(*, local_ms: int, server_ms: int) -> int:
+        return server_ms - local_ms
+
+    @staticmethod
+    def compute_now_ms_corrected(*, local_ms: int, clock_skew_ms: int) -> int:
+        return local_ms + clock_skew_ms
+
+    def _set_next_refresh(self, now_mono: float) -> None:
+        interval = self.degraded_retry_sec if self.state.state == "degraded" else self.refresh_sec
+        self._next_refresh_mono = now_mono + interval
+
+    def refresh_server_time(self, *, force: bool = False) -> bool:
+        now_mono = time.monotonic()
+        if not force and now_mono < self._next_refresh_mono:
+            return self.state.state == "synced"
+
+        local_ms = int(time.time() * 1000)
+        start = time.perf_counter()
+        try:
+            server_ms = self.rest_client.fetch_server_time_ms()
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            skew_ms = self.compute_clock_skew_ms(local_ms=local_ms, server_ms=server_ms)
+            corrected_ms = self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=skew_ms)
+            self.state.clock_skew_ms = skew_ms
+            self.state.last_server_ms = server_ms
+            self.state.last_sync_local_ms = local_ms
+            self.state.state = "synced"
+            self._set_next_refresh(now_mono)
+            logging.info(
+                "event=server_time_refresh result=success unit=ms latency_ms=%d local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d clock_state=%s http_status=na",
+                latency_ms,
+                local_ms,
+                server_ms,
+                skew_ms,
+                corrected_ms,
+                self.state.state,
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            self.state.state = "degraded"
+            self.state.clock_skew_ms = 0
+            self.state.last_server_ms = None
+            self.state.last_sync_local_ms = None
+            self._set_next_refresh(now_mono)
+            logging.warning(
+                "event=server_time_refresh result=fail unit=ms latency_ms=%d local_ms=%d server_ms=na skew_ms=na clock_state=%s http_status=na error=%s",
+                latency_ms,
+                local_ms,
+                self.state.state,
+                exc,
+            )
+            return False
+
+    def now_ms(self) -> int:
+        self.refresh_server_time(force=False)
+        local_ms = int(time.time() * 1000)
+        if self.state.state == "degraded":
+            return local_ms
+
+        corrected_ms = self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=self.state.clock_skew_ms)
+        if self.state.last_server_ms is None:
+            return local_ms
+
+        drift_ms = abs(corrected_ms - self.state.last_server_ms)
+        if drift_ms <= self.max_clock_error_ms:
+            return corrected_ms
+
+        logging.warning(
+            "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=force_refresh",
+            local_ms,
+            self.state.last_server_ms,
+            self.state.clock_skew_ms,
+            corrected_ms,
+            drift_ms,
+            self.max_clock_error_ms,
+        )
+        if self.refresh_server_time(force=True):
+            refreshed_local_ms = int(time.time() * 1000)
+            return self.compute_now_ms_corrected(
+                local_ms=refreshed_local_ms,
+                clock_skew_ms=self.state.clock_skew_ms,
+            )
+
+        logging.warning(
+            "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=na skew_ms=na now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=degrade",
+            local_ms,
+            local_ms,
+            drift_ms,
+            self.max_clock_error_ms,
+        )
+        return local_ms
+
+
 class SourceManager:
     def __init__(
         self,
@@ -55,6 +175,8 @@ class SourceManager:
         funding_history_limit: int = 3,
         max_clock_error_ms: int = 1000,
         kline_stale_ms: int | None = None,
+        server_time_refresh_sec: int = 60,
+        server_time_degraded_retry_sec: int = 10,
     ) -> None:
         self.symbols = symbols
         self.datastore = datastore
@@ -73,7 +195,6 @@ class SourceManager:
         self.funding_poll_seconds = funding_poll_seconds
         self.oi_poll_seconds = oi_poll_seconds
         self.funding_history_limit = funding_history_limit
-        self.max_clock_error_ms = max_clock_error_ms
 
         self._mode = "ws" if preferred_mode == "ws" else "rest"
         self._ws_good_ticks = 0
@@ -85,22 +206,27 @@ class SourceManager:
         self._last_health_log = 0.0
         self._ws_backoff = ws_backoff_min
         self._ws_next_retry_at = 0.0
-        self._clock_skew_ms = 0
-        self._last_server_ms: int | None = None
+
+        self._clock = ClockSync(
+            rest_client=rest_client,
+            max_clock_error_ms=max_clock_error_ms,
+            refresh_sec=server_time_refresh_sec,
+            degraded_retry_sec=server_time_degraded_retry_sec,
+        )
 
         self.datastore.set_mode(self._mode)
-        self._init_clock_skew()
+        self._clock.refresh_server_time(force=True)
         self._safe_state_sync(reason="bootstrap")
         if self._mode == "ws":
             self._connect_ws(initial=True)
 
     @staticmethod
     def compute_clock_skew_ms(*, local_ms: int, server_ms: int) -> int:
-        return server_ms - local_ms
+        return ClockSync.compute_clock_skew_ms(local_ms=local_ms, server_ms=server_ms)
 
     @staticmethod
     def compute_now_ms_corrected(*, local_ms: int, clock_skew_ms: int) -> int:
-        return local_ms + clock_skew_ms
+        return ClockSync.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=clock_skew_ms)
 
     @staticmethod
     def dt_to_ms(ts: datetime | None) -> int | None:
@@ -123,56 +249,10 @@ class SourceManager:
         return raw_age_ms / 1000.0
 
     def now_ms_corrected(self) -> int:
-        local_ms = int(time.time() * 1000)
-        now_ms = self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=self._clock_skew_ms)
-        if self._last_server_ms is not None:
-            drift_ms = abs(now_ms - self._last_server_ms)
-            if drift_ms > self.max_clock_error_ms:
-                logging.warning(
-                    "clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d",
-                    local_ms,
-                    self._last_server_ms,
-                    self._clock_skew_ms,
-                    now_ms,
-                    drift_ms,
-                    self.max_clock_error_ms,
-                )
-                return self._last_server_ms
-        return now_ms
+        return self._clock.now_ms()
 
     def _now_dt_corrected(self) -> datetime:
         return datetime.fromtimestamp(self.now_ms_corrected() / 1000, tz=timezone.utc)
-
-    def _init_clock_skew(self) -> None:
-        local_ms = int(time.time() * 1000)
-        try:
-            server_ms = self.rest_client.fetch_server_time_ms()
-            skew_ms = self.compute_clock_skew_ms(local_ms=local_ms, server_ms=server_ms)
-            now_ms = self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=skew_ms)
-            self._clock_skew_ms = skew_ms
-            self._last_server_ms = server_ms
-            logging.info(
-                "clock_sync unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d",
-                local_ms,
-                server_ms,
-                skew_ms,
-                now_ms,
-            )
-            if abs(now_ms - server_ms) > self.max_clock_error_ms:
-                logging.warning(
-                    "clock_sync_sanity_failed unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d max_clock_error_ms=%d",
-                    local_ms,
-                    server_ms,
-                    skew_ms,
-                    now_ms,
-                    self.max_clock_error_ms,
-                )
-                self._clock_skew_ms = self.compute_clock_skew_ms(local_ms=local_ms, server_ms=server_ms)
-                self._last_server_ms = server_ms
-        except Exception as exc:  # noqa: BLE001
-            self._clock_skew_ms = 0
-            self._last_server_ms = None
-            logging.warning("Clock sync failed, using local clock only: %s", exc)
 
     def _connect_ws(self, *, initial: bool = False) -> None:
         try:
@@ -370,6 +450,12 @@ class SourceManager:
         self._last_health_log = now_mono
 
         now_ms = self.now_ms_corrected()
+        clock_state = self._clock.state.state
+        if self._clock.state.last_sync_local_ms is None:
+            last_server_sync_age_ms: int | None = None
+        else:
+            last_server_sync_age_ms = max(0, int(time.time() * 1000) - self._clock.state.last_sync_local_ms)
+
         for symbol in self.symbols:
             snap = self.datastore.snapshot(symbol)
             fields = {
@@ -393,7 +479,7 @@ class SourceManager:
 
             price_size, kline_size = self.datastore.buffer_sizes(symbol)
             logging.info(
-                "health mode=%s symbol=%s now_ms_corrected=%d clock_skew_ms=%d "
+                "health mode=%s symbol=%s now_ms_corrected=%d clock_skew_ms=%d clock_state=%s last_server_sync_age_ms=%s "
                 "last_price_ts_ms=%s last_kline_close_ts_ms=%s last_kline_recv_ts_ms=%s funding_ts_ms=%s open_interest_ts_ms=%s "
                 "last_price_raw_age_ms=%s last_kline_close_raw_age_ms=%s last_kline_recv_raw_age_ms=%s funding_raw_age_ms=%s oi_raw_age_ms=%s "
                 "last_price_age_seconds=%s last_kline_age_seconds=%s last_kline_recv_age_seconds=%s funding_age_seconds=%s oi_age_seconds=%s "
@@ -401,7 +487,9 @@ class SourceManager:
                 self._mode,
                 symbol,
                 now_ms,
-                self._clock_skew_ms,
+                self._clock.state.clock_skew_ms,
+                clock_state,
+                self._fmt_int(last_server_sync_age_ms),
                 self._fmt_int(fields["last_price"]),
                 self._fmt_int(fields["last_kline_close"]),
                 self._fmt_int(fields["last_kline_recv"]),

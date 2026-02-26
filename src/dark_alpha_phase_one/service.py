@@ -138,6 +138,8 @@ class SignalService:
             oi_poll_seconds=settings.oi_poll_seconds,
             max_clock_error_ms=settings.max_clock_error_ms,
             kline_stale_ms=settings.kline_stale_ms,
+            server_time_refresh_sec=settings.server_time_refresh_sec,
+            server_time_degraded_retry_sec=settings.server_time_degraded_retry_sec,
         )
         self.telegram_notifier = TelegramNotifier(
             bot_token=settings.telegram_bot_token,
