@@ -29,32 +29,49 @@ def _snapshot(funding_ts: datetime | None, oi_ts: datetime | None) -> SymbolSnap
     )
 
 
-def test_derivatives_fresh_true_for_recent_data() -> None:
+def test_derivatives_gate_allows_recent_data() -> None:
     now = datetime.now(tz=timezone.utc)
     now_ms = SourceManager.dt_to_ms(now)
     assert now_ms is not None
 
     snap = _snapshot(funding_ts=now - timedelta(seconds=30), oi_ts=now - timedelta(seconds=5))
-    assert derivatives_are_fresh(
+    gate = derivatives_are_fresh(
         snap,
         now_ms_corrected=now_ms,
         funding_stale_ms=180_000,
-        oi_stale_ms=30_000,
+        oi_stale_ms=180_000,
     )
+    assert gate.allow
+    assert gate.oi_status == "fresh"
 
 
-def test_derivatives_fresh_false_for_stale_data() -> None:
+def test_derivatives_gate_blocks_funding_stale() -> None:
     now = datetime.now(tz=timezone.utc)
     now_ms = SourceManager.dt_to_ms(now)
     assert now_ms is not None
 
-    snap = _snapshot(funding_ts=now - timedelta(seconds=300), oi_ts=now - timedelta(seconds=50))
-    assert (
-        derivatives_are_fresh(
-            snap,
-            now_ms_corrected=now_ms,
-            funding_stale_ms=180_000,
-            oi_stale_ms=30_000,
-        )
-        is False
+    snap = _snapshot(funding_ts=now - timedelta(seconds=300), oi_ts=now - timedelta(seconds=10))
+    gate = derivatives_are_fresh(
+        snap,
+        now_ms_corrected=now_ms,
+        funding_stale_ms=180_000,
+        oi_stale_ms=180_000,
     )
+    assert gate.allow is False
+    assert gate.reason == "funding_stale"
+
+
+def test_derivatives_gate_allows_oi_stale_with_status() -> None:
+    now = datetime.now(tz=timezone.utc)
+    now_ms = SourceManager.dt_to_ms(now)
+    assert now_ms is not None
+
+    snap = _snapshot(funding_ts=now - timedelta(seconds=30), oi_ts=now - timedelta(seconds=200))
+    gate = derivatives_are_fresh(
+        snap,
+        now_ms_corrected=now_ms,
+        funding_stale_ms=180_000,
+        oi_stale_ms=120_000,
+    )
+    assert gate.allow
+    assert gate.oi_status == "stale"

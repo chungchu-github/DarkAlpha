@@ -39,30 +39,29 @@ def test_health_age_and_derivatives_gating_are_consistent() -> None:
     oi_raw_age_ms = SourceManager.raw_age_ms(now_ms, SourceManager.dt_to_ms(snap.open_interest_ts))
 
     assert funding_raw_age_ms is not None and funding_raw_age_ms < 180_000
-    assert oi_raw_age_ms is not None and oi_raw_age_ms < 30_000
-    assert derivatives_are_fresh(
+    assert oi_raw_age_ms is not None and oi_raw_age_ms < 180_000
+    gate = derivatives_are_fresh(
         snap,
         now_ms_corrected=now_ms,
         funding_stale_ms=180_000,
-        oi_stale_ms=30_000,
+        oi_stale_ms=180_000,
     )
+    assert gate.allow
 
 
-def test_derivatives_gating_turns_false_when_health_raw_age_exceeds_threshold() -> None:
+def test_derivatives_gating_allows_oi_stale_but_marks_status() -> None:
     now = datetime.now(tz=timezone.utc)
     now_ms = SourceManager.dt_to_ms(now)
     assert now_ms is not None
-    snap = _snapshot(now)
-    snap = replace(snap, open_interest_ts=now - timedelta(seconds=45))
+    snap = replace(_snapshot(now), open_interest_ts=now - timedelta(seconds=200))
 
     oi_raw_age_ms = SourceManager.raw_age_ms(now_ms, SourceManager.dt_to_ms(snap.open_interest_ts))
-    assert oi_raw_age_ms is not None and oi_raw_age_ms > 30_000
-    assert (
-        derivatives_are_fresh(
-            snap,
-            now_ms_corrected=now_ms,
-            funding_stale_ms=180_000,
-            oi_stale_ms=30_000,
-        )
-        is False
+    assert oi_raw_age_ms is not None and oi_raw_age_ms > 120_000
+    gate = derivatives_are_fresh(
+        snap,
+        now_ms_corrected=now_ms,
+        funding_stale_ms=180_000,
+        oi_stale_ms=120_000,
     )
+    assert gate.allow
+    assert gate.oi_status == "stale"

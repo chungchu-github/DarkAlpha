@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import logging
 import time
@@ -81,37 +82,76 @@ def build_signal_context(
     )
 
 
+
+
+@dataclass(frozen=True)
+class DerivativesGate:
+    allow: bool
+    oi_status: str
+    funding_raw_age_ms: int | None
+    oi_raw_age_ms: int | None
+    reason: str
+
 def derivatives_are_fresh(
     snapshot: SymbolSnapshot,
     *,
     now_ms_corrected: int,
     funding_stale_ms: int,
     oi_stale_ms: int,
-) -> bool:
+) -> DerivativesGate:
     funding_ts_ms = SourceManager.dt_to_ms(snapshot.funding_ts)
     oi_ts_ms = SourceManager.dt_to_ms(snapshot.open_interest_ts)
     funding_raw_age_ms = SourceManager.raw_age_ms(now_ms_corrected, funding_ts_ms)
     oi_raw_age_ms = SourceManager.raw_age_ms(now_ms_corrected, oi_ts_ms)
 
-    if funding_raw_age_ms is None or oi_raw_age_ms is None:
-        return False
-
-    funding_stale = funding_raw_age_ms > funding_stale_ms
-    oi_stale = oi_raw_age_ms > oi_stale_ms
-    if funding_stale or oi_stale:
+    if funding_raw_age_ms is None:
         logging.info(
-            "derivatives_stale_check unit=ms symbol=%s mode=%s now_ms_corrected=%d funding_ts_ms=%s oi_ts_ms=%s funding_raw_age_ms=%d oi_raw_age_ms=%d funding_threshold_ms=%d oi_threshold_ms=%d",
+            "derivatives_stale_check unit=ms symbol=%s mode=%s now_ms_corrected=%d funding_raw_age_ms=na funding_threshold_ms=%d oi_raw_age_ms=%s oi_threshold_ms=%d oi_status=unknown skip=true reason=funding_missing",
             snapshot.symbol,
             snapshot.data_source_mode,
             now_ms_corrected,
-            funding_ts_ms,
-            oi_ts_ms,
-            funding_raw_age_ms,
-            oi_raw_age_ms,
             funding_stale_ms,
+            "na" if oi_raw_age_ms is None else str(oi_raw_age_ms),
             oi_stale_ms,
         )
-    return not funding_stale and not oi_stale
+        return DerivativesGate(
+            allow=False,
+            oi_status="unknown",
+            funding_raw_age_ms=None,
+            oi_raw_age_ms=oi_raw_age_ms,
+            reason="funding_missing",
+        )
+
+    funding_stale = funding_raw_age_ms > funding_stale_ms
+    oi_status = "unknown"
+    if oi_raw_age_ms is not None:
+        oi_status = "stale" if oi_raw_age_ms > oi_stale_ms else "fresh"
+
+    skip = funding_stale
+    reason = "funding_stale" if funding_stale else "ok"
+
+    logging.info(
+        "derivatives_stale_check unit=ms symbol=%s mode=%s now_ms_corrected=%d funding_raw_age_ms=%d funding_threshold_ms=%d oi_raw_age_ms=%s oi_threshold_ms=%d oi_status=%s skip=%s reason=%s",
+        snapshot.symbol,
+        snapshot.data_source_mode,
+        now_ms_corrected,
+        funding_raw_age_ms,
+        funding_stale_ms,
+        "na" if oi_raw_age_ms is None else str(oi_raw_age_ms),
+        oi_stale_ms,
+        oi_status,
+        str(skip).lower(),
+        reason,
+    )
+
+    return DerivativesGate(
+        allow=not skip,
+        oi_status=oi_status,
+        funding_raw_age_ms=funding_raw_age_ms,
+        oi_raw_age_ms=oi_raw_age_ms,
+        reason=reason,
+    )
+
 
 
 class SignalService:
@@ -206,13 +246,21 @@ class SignalService:
             return None
 
         now_ms_corrected = self.source_manager.now_ms_corrected()
-        if not derivatives_are_fresh(
+        derivatives_gate = derivatives_are_fresh(
             snapshot,
             now_ms_corrected=now_ms_corrected,
             funding_stale_ms=self.settings.funding_stale_ms,
             oi_stale_ms=self.settings.oi_stale_ms,
-        ):
-            logging.info("Derivatives stale for %s, skip card generation", symbol)
+        )
+        if not derivatives_gate.allow:
+            logging.info(
+                "Derivatives stale for %s, skip card generation reason=%s funding_raw_age_ms=%s oi_raw_age_ms=%s oi_status=%s",
+                symbol,
+                derivatives_gate.reason,
+                derivatives_gate.funding_raw_age_ms,
+                derivatives_gate.oi_raw_age_ms,
+                derivatives_gate.oi_status,
+            )
             return None
 
         if snapshot.last_funding_rate is None or snapshot.open_interest is None or snapshot.mark_price is None:
@@ -265,7 +313,7 @@ class SignalService:
             return None
 
         self.risk_engine.record_trigger(symbol)
-        return card
+        return replace(card, oi_status=derivatives_gate.oi_status)
 
     def _collect_strategy_cards(self, signal_context: SignalContext) -> list[ProposalCard]:
         cards: list[ProposalCard] = []
