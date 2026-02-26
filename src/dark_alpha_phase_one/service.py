@@ -13,10 +13,6 @@ from .calculations import (
     compute_oi_delta_pct_15m,
     compute_oi_zscore_15m,
 )
-
-ATR_PERIOD_15M = 14
-ATR_WINDOW_MINUTES = 15
-MIN_1M_BARS_FOR_ATR = ATR_WINDOW_MINUTES * ATR_PERIOD_15M
 from .config import Settings
 from .data.binance_rest import BinanceRestDataClient
 from .data.binance_ws import BinanceWsClient
@@ -32,6 +28,10 @@ from .strategies.funding_oi_skew import FundingOiSkewStrategy
 from .strategies.liquidation_follow import LiquidationFollowStrategy
 from .strategies.vol_breakout import VolBreakoutStrategy
 from .telegram_client import TelegramNotifier
+
+ATR_PERIOD_15M = 14
+ATR_WINDOW_MINUTES = 15
+MIN_1M_BARS_FOR_ATR = ATR_WINDOW_MINUTES * ATR_PERIOD_15M
 
 
 def build_signal_context(
@@ -81,13 +81,37 @@ def build_signal_context(
     )
 
 
-def derivatives_are_fresh(snapshot: SymbolSnapshot, funding_stale_seconds: int, oi_stale_seconds: int) -> bool:
-    now = datetime.now(tz=timezone.utc)
-    if snapshot.funding_ts is None or snapshot.open_interest_ts is None:
+def derivatives_are_fresh(
+    snapshot: SymbolSnapshot,
+    *,
+    now_ms_corrected: int,
+    funding_stale_ms: int,
+    oi_stale_ms: int,
+) -> bool:
+    funding_ts_ms = SourceManager.dt_to_ms(snapshot.funding_ts)
+    oi_ts_ms = SourceManager.dt_to_ms(snapshot.open_interest_ts)
+    funding_raw_age_ms = SourceManager.raw_age_ms(now_ms_corrected, funding_ts_ms)
+    oi_raw_age_ms = SourceManager.raw_age_ms(now_ms_corrected, oi_ts_ms)
+
+    if funding_raw_age_ms is None or oi_raw_age_ms is None:
         return False
-    funding_age = (now - snapshot.funding_ts).total_seconds()
-    oi_age = (now - snapshot.open_interest_ts).total_seconds()
-    return funding_age <= funding_stale_seconds and oi_age <= oi_stale_seconds
+
+    funding_stale = funding_raw_age_ms > funding_stale_ms
+    oi_stale = oi_raw_age_ms > oi_stale_ms
+    if funding_stale or oi_stale:
+        logging.info(
+            "derivatives_stale_check unit=ms symbol=%s mode=%s now_ms_corrected=%d funding_ts_ms=%s oi_ts_ms=%s funding_raw_age_ms=%d oi_raw_age_ms=%d funding_threshold_ms=%d oi_threshold_ms=%d",
+            snapshot.symbol,
+            snapshot.data_source_mode,
+            now_ms_corrected,
+            funding_ts_ms,
+            oi_ts_ms,
+            funding_raw_age_ms,
+            oi_raw_age_ms,
+            funding_stale_ms,
+            oi_stale_ms,
+        )
+    return not funding_stale and not oi_stale
 
 
 class SignalService:
@@ -112,6 +136,8 @@ class SignalService:
             premiumindex_poll_seconds=settings.premiumindex_poll_seconds,
             funding_poll_seconds=settings.funding_poll_seconds,
             oi_poll_seconds=settings.oi_poll_seconds,
+            max_clock_error_ms=settings.max_clock_error_ms,
+            kline_stale_ms=settings.kline_stale_ms,
         )
         self.telegram_notifier = TelegramNotifier(
             bot_token=settings.telegram_bot_token,
@@ -175,7 +201,13 @@ class SignalService:
             logging.debug("Data not ready for %s in mode=%s", symbol, snapshot.data_source_mode)
             return None
 
-        if not derivatives_are_fresh(snapshot, self.settings.funding_stale_seconds, self.settings.oi_stale_seconds):
+        now_ms_corrected = self.source_manager.now_ms_corrected()
+        if not derivatives_are_fresh(
+            snapshot,
+            now_ms_corrected=now_ms_corrected,
+            funding_stale_ms=self.settings.funding_stale_ms,
+            oi_stale_ms=self.settings.oi_stale_ms,
+        ):
             logging.info("Derivatives stale for %s, skip card generation", symbol)
             return None
 

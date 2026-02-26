@@ -211,10 +211,10 @@ def test_derivatives_are_polled_and_stored() -> None:
     assert len(snapshot.funding_rate_history) == 1
 
 
-def test_age_seconds_is_clamped_for_future_timestamp() -> None:
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    future = now + timedelta(milliseconds=300)
+def test_raw_age_ms_supports_future_timestamp() -> None:
+    now_ms = 1_700_000_000_000
+    future_ms = now_ms + 300
 
-    age = SourceManager._age_seconds(now, future)
+    raw_age = SourceManager.raw_age_ms(now_ms, future_ms)
 
-    assert age == 0.0
+    assert raw_age == -300

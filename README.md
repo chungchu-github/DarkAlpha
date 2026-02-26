@@ -118,6 +118,7 @@ pytest -q
 - `DATA_SOURCE_PREFERRED=ws`
 - `STALE_SECONDS=5`
 - `KLINE_STALE_SECONDS=30`
+- `KLINE_STALE_MS=30000`（WS kline freshness 使用「最後收到 kline 訊息時間」）
 - `WS_BACKOFF_MIN=1`
 - `WS_BACKOFF_MAX=60`
 - `REST_PRICE_POLL_SECONDS=1`
@@ -132,6 +133,9 @@ pytest -q
 - `OI_POLL_SECONDS=10`
 - `FUNDING_STALE_SECONDS=180`
 - `OI_STALE_SECONDS=30`
+- `FUNDING_STALE_MS=180000`
+- `OI_STALE_MS=30000`
+- `MAX_CLOCK_ERROR_MS=1000`（clock sanity check 容忍誤差）
 
 > funding/OI 若過舊，服務會跳過提案卡生成。
 
@@ -221,6 +225,7 @@ pytest -q
 
 ## 9. 可用性與穩定性設計
 
+- health log 會同時輸出 `*_raw_age_ms` 與 `*_age_seconds`，若 timestamp 在未來會記錄 `timestamp_in_future` 告警
 - WS 異常、price stale、kline stale 都會觸發 `ws -> rest`
 - REST 模式下持續嘗試 WS 重連（exponential backoff）
 - WS 恢復達標後 `rest -> ws`，切回前先做 state sync 補 K 線

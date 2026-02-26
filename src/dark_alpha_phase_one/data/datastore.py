@@ -21,6 +21,7 @@ class SymbolSnapshot:
     klines_1m: list[Candle]
     last_price_ts: datetime | None
     last_kline_close_ts: datetime | None
+    last_kline_recv_ts: datetime | None
     data_source_mode: str
     last_funding_rate: float | None
     next_funding_time_ms: int | None
@@ -42,6 +43,7 @@ class DataStore:
         self._klines: dict[str, deque[Candle]] = {symbol: deque(maxlen=max_klines) for symbol in symbols}
         self._last_price_ts: dict[str, datetime | None] = {symbol: None for symbol in symbols}
         self._last_kline_close_ts: dict[str, datetime | None] = {symbol: None for symbol in symbols}
+        self._last_kline_recv_ts: dict[str, datetime | None] = {symbol: None for symbol in symbols}
         self._last_ws_kline_open_time: dict[str, int | None] = {symbol: None for symbol in symbols}
 
         self._last_funding_rate: dict[str, float | None] = {symbol: None for symbol in symbols}
@@ -77,6 +79,7 @@ class DataStore:
             self._klines[symbol].clear()
             self._klines[symbol].extend(klines)
             self._last_kline_close_ts[symbol] = ts
+            self._last_kline_recv_ts[symbol] = ts
             self._last_ws_kline_open_time[symbol] = None
 
     def upsert_ws_kline(
@@ -96,6 +99,7 @@ class DataStore:
                 self._klines[symbol].append(candle)
                 self._last_ws_kline_open_time[symbol] = open_time_ms
 
+            self._last_kline_recv_ts[symbol] = ts
             if is_closed:
                 self._last_kline_close_ts[symbol] = ts
 
@@ -142,6 +146,7 @@ class DataStore:
                 klines_1m=list(self._klines[symbol]),
                 last_price_ts=self._last_price_ts[symbol],
                 last_kline_close_ts=self._last_kline_close_ts[symbol],
+                last_kline_recv_ts=self._last_kline_recv_ts[symbol],
                 data_source_mode=self._mode,
                 last_funding_rate=self._last_funding_rate[symbol],
                 next_funding_time_ms=self._next_funding_time_ms[symbol],

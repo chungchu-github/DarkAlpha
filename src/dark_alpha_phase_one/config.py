@@ -29,6 +29,7 @@ class Settings:
     data_source_preferred: str
     stale_seconds: int
     kline_stale_seconds: int
+    kline_stale_ms: int
     ws_backoff_min: int
     ws_backoff_max: int
     rest_price_poll_seconds: float
@@ -40,6 +41,9 @@ class Settings:
     oi_poll_seconds: float
     funding_stale_seconds: int
     oi_stale_seconds: int
+    funding_stale_ms: int
+    oi_stale_ms: int
+    max_clock_error_ms: int
     funding_extreme: float
     oi_zscore: float
     oi_delta_pct: float
@@ -82,6 +86,7 @@ def load_settings() -> Settings:
         data_source_preferred=os.getenv("DATA_SOURCE_PREFERRED", "ws"),
         stale_seconds=int(os.getenv("STALE_SECONDS", "5")),
         kline_stale_seconds=int(os.getenv("KLINE_STALE_SECONDS", "30")),
+        kline_stale_ms=int(os.getenv("KLINE_STALE_MS", str(int(os.getenv("KLINE_STALE_SECONDS", "30")) * 1000))),
         ws_backoff_min=int(os.getenv("WS_BACKOFF_MIN", "1")),
         ws_backoff_max=int(os.getenv("WS_BACKOFF_MAX", "60")),
         rest_price_poll_seconds=float(os.getenv("REST_PRICE_POLL_SECONDS", "1")),
@@ -93,6 +98,9 @@ def load_settings() -> Settings:
         oi_poll_seconds=float(os.getenv("OI_POLL_SECONDS", "10")),
         funding_stale_seconds=int(os.getenv("FUNDING_STALE_SECONDS", "180")),
         oi_stale_seconds=int(os.getenv("OI_STALE_SECONDS", "30")),
+        funding_stale_ms=int(os.getenv("FUNDING_STALE_MS", str(int(os.getenv("FUNDING_STALE_SECONDS", "180")) * 1000))),
+        oi_stale_ms=int(os.getenv("OI_STALE_MS", str(int(os.getenv("OI_STALE_SECONDS", "30")) * 1000))),
+        max_clock_error_ms=int(os.getenv("MAX_CLOCK_ERROR_MS", "1000")),
         funding_extreme=float(os.getenv("FUNDING_EXTREME", "0.0005")),
         oi_zscore=float(os.getenv("OI_ZSCORE", "2.0")),
         oi_delta_pct=float(os.getenv("OI_DELTA_PCT", "0.10")),
