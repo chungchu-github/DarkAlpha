@@ -1,6 +1,6 @@
-# DarkAlphaPhaseOne
+# DarkAlpha
 
-DarkAlphaPhaseOne 是一個 **Binance USDT-M Futures 訊號提案服務**：
+DarkAlpha 是一個 **Binance USDT-M Futures 訊號提案服務**：
 系統會持續拉取市場資料、計算指標、執行多策略、做仲裁與風控，最後把唯一提案卡格式化為人類可讀的 HTML 訊息推送到 Telegram（JSON 僅保留於 log/postback）。
 
 > 目前輸出為「提案卡」，**不下單**。
