@@ -59,6 +59,10 @@ class Settings:
     dedupe_window_seconds: int
     entry_similar_pct: float
     stop_similar_pct: float
+    test_emit_enabled: bool
+    test_emit_symbols: list[str]
+    test_emit_interval_sec: int
+    test_emit_tf: str
     priority_fake_breakout: int
     priority_funding_oi_skew: int
     priority_liquidation_follow: int
@@ -121,6 +125,10 @@ def load_settings() -> Settings:
         dedupe_window_seconds=int(os.getenv("DEDUPE_WINDOW_SECONDS", "300")),
         entry_similar_pct=float(os.getenv("ENTRY_SIMILAR_PCT", "0.001")),
         stop_similar_pct=float(os.getenv("STOP_SIMILAR_PCT", "0.001")),
+        test_emit_enabled=os.getenv("TEST_EMIT_ENABLED", "0") == "1",
+        test_emit_symbols=[symbol.strip().upper() for symbol in os.getenv("TEST_EMIT_SYMBOLS", symbols).split(",") if symbol.strip()],
+        test_emit_interval_sec=int(os.getenv("TEST_EMIT_INTERVAL_SEC", "60")),
+        test_emit_tf=os.getenv("TEST_EMIT_TF", "1m"),
         priority_fake_breakout=int(os.getenv("PRIORITY_FAKE_BREAKOUT", "100")),
         priority_funding_oi_skew=int(os.getenv("PRIORITY_FUNDING_OI_SKEW", "80")),
         priority_liquidation_follow=int(os.getenv("PRIORITY_LIQUIDATION_FOLLOW", "60")),

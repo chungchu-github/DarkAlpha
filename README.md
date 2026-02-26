@@ -171,6 +171,21 @@ pytest -q
 - `PRIORITY_LIQUIDATION_FOLLOW=60`
 - `PRIORITY_VOL_BREAKOUT=40`
 
+
+### 5.7 測試出卡模式（Test Emit Mode）
+
+用於快速驗證出卡 pipeline（Card / Telegram / Postback）是否通暢，不依賴策略是否真的出訊號。
+
+- `TEST_EMIT_ENABLED=0`（`1` 開啟）
+- `TEST_EMIT_SYMBOLS=BTCUSDT`（僅這些 symbol 啟用測試出卡）
+- `TEST_EMIT_INTERVAL_SEC=60`（同一 symbol 的最小出卡間隔）
+- `TEST_EMIT_TF=1m`（僅用於 log 標記）
+
+說明：
+- 開啟後，當服務進入 `atr_warmup / atr_unavailable / strategy_no_card / risk_blocked` 等無正式卡片情境，會改送一張 `test_emit_dryrun` 卡片做 pipeline 驗證。
+- 仍會套用衍生品 freshness gate；若 funding 缺失或過舊，仍不會發送卡片。
+- `oi_status` 會沿用當下衍生品狀態（`fresh` 或 `stale`）。
+
 ---
 
 ## 6. 策略說明
