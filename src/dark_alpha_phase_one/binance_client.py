@@ -40,24 +40,3 @@ class BinanceFuturesClient:
         ]
         logging.debug("Fetched %d 1m klines for %s", len(candles), symbol)
         return candles
-
-    def get_premium_index(self, symbol: str) -> dict[str, object]:
-        resp = self.session.get(
-            f"{self.base_url}/fapi/v1/premiumIndex", params={"symbol": symbol}, timeout=10
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    def get_funding_rate_history(self, symbol: str, limit: int = 3) -> list[dict[str, object]]:
-        resp = self.session.get(
-            f"{self.base_url}/fapi/v1/fundingRate", params={"symbol": symbol, "limit": limit}, timeout=10
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    def get_open_interest(self, symbol: str) -> dict[str, object]:
-        resp = self.session.get(
-            f"{self.base_url}/fapi/v1/openInterest", params={"symbol": symbol}, timeout=10
-        )
-        resp.raise_for_status()
-        return resp.json()

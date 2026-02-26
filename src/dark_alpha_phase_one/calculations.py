@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from statistics import mean, pstdev
 
 
 @dataclass(frozen=True)
@@ -76,36 +74,3 @@ def calculate_position_usdt(entry: float, stop: float, max_risk_usdt: float) -> 
     if risk_ratio <= 0:
         raise ValueError("Risk ratio must be positive")
     return max_risk_usdt / risk_ratio
-
-
-def aggregate_oi_to_15m(oi_series: list[tuple[datetime, float]]) -> list[float]:
-    if not oi_series:
-        return []
-    bucket: dict[int, float] = {}
-    for ts, oi in oi_series:
-        bucket_key = int(ts.timestamp()) // (15 * 60)
-        bucket[bucket_key] = oi
-    return [bucket[key] for key in sorted(bucket.keys())]
-
-
-def compute_oi_zscore_15m(oi_windows: list[float], baseline_windows: int = 96) -> float | None:
-    if len(oi_windows) < 2:
-        return None
-    current = oi_windows[-1]
-    baseline = oi_windows[:-1][-baseline_windows:]
-    if len(baseline) < 2:
-        return None
-    sigma = pstdev(baseline)
-    if sigma == 0:
-        return 0.0
-    return (current - mean(baseline)) / sigma
-
-
-def compute_oi_delta_pct_15m(oi_windows: list[float]) -> float | None:
-    if len(oi_windows) < 2:
-        return None
-    prev = oi_windows[-2]
-    current = oi_windows[-1]
-    if prev == 0:
-        return None
-    return (current - prev) / prev

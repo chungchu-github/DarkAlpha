@@ -10,7 +10,6 @@ packages = [{ include = "dark_alpha_phase_one", from = "src" }]
 python = "^3.11"
 requests = "^2.32.3"
 python-dotenv = "^1.0.1"
-websocket-client = "^1.8.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
