@@ -100,6 +100,7 @@ pytest -q
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+- `POSTBACK_URL`（可選，啟用 pipeline postback）
 - `SYMBOLS=BTCUSDT,ETHUSDT`
 - `POLL_SECONDS=1`
 

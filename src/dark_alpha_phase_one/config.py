@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 class Settings:
     telegram_bot_token: str
     telegram_chat_id: str
+    postback_url: str
     binance_api_key: str | None
     binance_api_secret: str | None
     symbols: list[str]
@@ -71,6 +72,7 @@ def load_settings() -> Settings:
     return Settings(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+        postback_url=os.getenv("POSTBACK_URL", ""),
         binance_api_key=os.getenv("BINANCE_API_KEY"),
         binance_api_secret=os.getenv("BINANCE_API_SECRET"),
         symbols=[symbol.strip().upper() for symbol in symbols.split(",") if symbol.strip()],

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 import logging
 import time
 
@@ -23,6 +24,7 @@ from .engine.arbitrator import Arbitrator, ArbitratorConfig
 from .engine.signal_context import SignalContext
 from .models import ProposalCard
 from .risk_engine import RiskEngine
+from .postback_client import PostbackClient
 from .strategies.base import Strategy
 from .strategies.fake_breakout_reversal import FakeBreakoutReversalStrategy
 from .strategies.funding_oi_skew import FundingOiSkewStrategy
@@ -157,6 +159,7 @@ def derivatives_are_fresh(
 class SignalService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.run_id = uuid4().hex
         self._atr_warmup_logged_symbols: set[str] = set()
         self.datastore = DataStore(symbols=settings.symbols)
         self.source_manager = SourceManager(
@@ -187,6 +190,7 @@ class SignalService:
             bot_token=settings.telegram_bot_token,
             chat_id=settings.telegram_chat_id,
         )
+        self.postback_client = PostbackClient(settings.postback_url)
         self.risk_engine = RiskEngine(
             state_path=settings.risk_state_path,
             max_daily_loss_usdt=settings.max_daily_loss_usdt,
@@ -239,11 +243,49 @@ class SignalService:
             ),
         ]
 
-    def evaluate_symbol(self, symbol: str) -> ProposalCard | None:
+
+    def _cooldown_remaining_ms(self, symbol: str) -> int:
+        last_trigger = self.risk_engine.get_last_trigger_time(symbol)
+        if last_trigger is None:
+            return 0
+        cooldown_until = last_trigger + timedelta(minutes=self.settings.cooldown_after_trigger_minutes)
+        now = datetime.now(tz=timezone.utc)
+        if now >= cooldown_until:
+            return 0
+        return int((cooldown_until - now).total_seconds() * 1000)
+
+    def _log_signal_decision(
+        self,
+        *,
+        symbol: str,
+        decision: str,
+        reason: str,
+        trace_id: str | None,
+        atr: float | None,
+        trend_score: float | None,
+        price_dist_pct: float | None,
+        derivatives_ok: bool,
+    ) -> None:
+        logging.info(
+            "event=signal_decision run_id=%s symbol=%s tf=1m decision=%s reason=%s cooldown_remaining_ms=%d atr=%s trend_score=%s price_dist_pct=%s derivatives_ok=%s trace_id=%s",
+            self.run_id,
+            symbol,
+            decision,
+            reason,
+            self._cooldown_remaining_ms(symbol),
+            "na" if atr is None else f"{atr:.6f}",
+            "na" if trend_score is None else f"{trend_score:.6f}",
+            "na" if price_dist_pct is None else f"{price_dist_pct:.6f}",
+            str(derivatives_ok).lower(),
+            trace_id or "na",
+        )
+
+    def evaluate_symbol(self, symbol: str) -> tuple[ProposalCard | None, str | None]:
         snapshot = self.datastore.snapshot(symbol)
         if snapshot.price is None or not snapshot.klines_1m:
             logging.debug("Data not ready for %s in mode=%s", symbol, snapshot.data_source_mode)
-            return None
+            self._log_signal_decision(symbol=symbol, decision="no_signal", reason="data_not_ready", trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=False)
+            return None, None
 
         now_ms_corrected = self.source_manager.now_ms_corrected()
         derivatives_gate = derivatives_are_fresh(
@@ -261,11 +303,13 @@ class SignalService:
                 derivatives_gate.oi_raw_age_ms,
                 derivatives_gate.oi_status,
             )
-            return None
+            self._log_signal_decision(symbol=symbol, decision="blocked", reason=derivatives_gate.reason, trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=False)
+            return None, None
 
         if snapshot.last_funding_rate is None or snapshot.open_interest is None or snapshot.mark_price is None:
             logging.info("Derivatives missing for %s, skip card generation", symbol)
-            return None
+            self._log_signal_decision(symbol=symbol, decision="blocked", reason="derivatives_missing", trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=False)
+            return None, None
 
         atr_need_bars_1m = MIN_1M_BARS_FOR_ATR
         if len(snapshot.klines_1m) < atr_need_bars_1m:
@@ -278,7 +322,8 @@ class SignalService:
                     ATR_PERIOD_15M,
                 )
                 self._atr_warmup_logged_symbols.add(symbol)
-            return None
+            self._log_signal_decision(symbol=symbol, decision="no_signal", reason="atr_warmup", trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=True)
+            return None, None
 
         signal_context = build_signal_context(
             symbol=symbol,
@@ -298,22 +343,27 @@ class SignalService:
                 atr_need_bars_1m,
                 ATR_PERIOD_15M,
             )
-            return None
+            self._log_signal_decision(symbol=symbol, decision="no_signal", reason="atr_unavailable", trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=True)
+            return None, None
 
         self._atr_warmup_logged_symbols.discard(symbol)
 
         candidates = self._collect_strategy_cards(signal_context)
         card = self.arbitrator.choose_best(candidates, signal_context)
         if card is None:
-            return None
+            self._log_signal_decision(symbol=symbol, decision="no_signal", reason="strategy_no_card", trace_id=None, atr=signal_context.atr_15m, trend_score=signal_context.return_5m, price_dist_pct=abs(signal_context.price - signal_context.mark_price) / signal_context.price if signal_context.price else None, derivatives_ok=True)
+            return None, None
 
         risk_decision = self.risk_engine.evaluate(symbol)
         if not risk_decision.allowed:
             logging.info("Risk blocked %s: %s", symbol, risk_decision.reason)
-            return None
+            self._log_signal_decision(symbol=symbol, decision="blocked", reason=risk_decision.reason, trace_id=None, atr=signal_context.atr_15m, trend_score=signal_context.return_5m, price_dist_pct=abs(signal_context.price - signal_context.mark_price) / signal_context.price if signal_context.price else None, derivatives_ok=True)
+            return None, None
 
+        trace_id = uuid4().hex
+        self._log_signal_decision(symbol=symbol, decision="emit", reason="ok", trace_id=trace_id, atr=signal_context.atr_15m, trend_score=signal_context.return_5m, price_dist_pct=abs(signal_context.price - signal_context.mark_price) / signal_context.price if signal_context.price else None, derivatives_ok=True)
         self.risk_engine.record_trigger(symbol)
-        return replace(card, oi_status=derivatives_gate.oi_status)
+        return replace(card, oi_status=derivatives_gate.oi_status), trace_id
 
     def _collect_strategy_cards(self, signal_context: SignalContext) -> list[ProposalCard]:
         cards: list[ProposalCard] = []
@@ -329,9 +379,46 @@ class SignalService:
             try:
                 self.source_manager.refresh()
                 for symbol in self.settings.symbols:
-                    card = self.evaluate_symbol(symbol)
-                    if card is not None:
-                        self.telegram_notifier.send_json_card(card.to_dict())
+                    card, trace_id = self.evaluate_symbol(symbol)
+                    if card is None or trace_id is None:
+                        continue
+
+                    started = time.perf_counter()
+                    payload = card.to_dict()
+                    logging.info("event=card_build_start run_id=%s trace_id=%s symbol=%s tf=1m", self.run_id, trace_id, symbol)
+                    build_start = time.perf_counter()
+                    try:
+                        payload_size = len(str(payload).encode("utf-8"))
+                        render_ms = int((time.perf_counter() - build_start) * 1000)
+                        logging.info("event=card_build_success run_id=%s trace_id=%s symbol=%s tf=1m bytes=%d render_ms=%d", self.run_id, trace_id, symbol, payload_size, render_ms)
+                    except Exception as exc:  # noqa: BLE001
+                        logging.error("event=card_build_fail run_id=%s trace_id=%s symbol=%s tf=1m err=%s", self.run_id, trace_id, symbol, exc)
+                        logging.info("event=emit_pipeline_result run_id=%s trace_id=%s symbol=%s tf=1m result=fail card=false telegram=not_sent postback=not_sent total_ms=%d", self.run_id, trace_id, symbol, int((time.perf_counter() - started) * 1000))
+                        continue
+
+                    telegram_status = "not_sent"
+                    postback_status = "not_sent"
+
+                    logging.info("event=telegram_send_start run_id=%s trace_id=%s symbol=%s tf=1m attempt=1", self.run_id, trace_id, symbol)
+                    tg_ok, tg_http, tg_message_id, tg_latency = self.telegram_notifier.send_json_card(payload)
+                    if tg_ok:
+                        telegram_status = "sent"
+                        logging.info("event=telegram_send_success run_id=%s trace_id=%s symbol=%s tf=1m message_id=%s latency_ms=%d", self.run_id, trace_id, symbol, tg_message_id if tg_message_id is not None else "na", tg_latency)
+                    else:
+                        telegram_status = "failed"
+                        logging.warning("event=telegram_send_fail run_id=%s trace_id=%s symbol=%s tf=1m attempt=1 http_status=%s", self.run_id, trace_id, symbol, tg_http if tg_http is not None else "na")
+
+                    logging.info("event=postback_send_start run_id=%s trace_id=%s symbol=%s tf=1m", self.run_id, trace_id, symbol)
+                    pb_ok, pb_http, pb_latency = self.postback_client.send(payload)
+                    if pb_ok:
+                        postback_status = "sent"
+                        logging.info("event=postback_send_success run_id=%s trace_id=%s symbol=%s tf=1m latency_ms=%d", self.run_id, trace_id, symbol, pb_latency)
+                    else:
+                        postback_status = "failed"
+                        logging.warning("event=postback_send_fail run_id=%s trace_id=%s symbol=%s tf=1m http_status=%s", self.run_id, trace_id, symbol, pb_http if pb_http is not None else "na")
+
+                    result = "success" if telegram_status == "sent" and postback_status == "sent" else ("partial" if telegram_status == "sent" or postback_status == "sent" else "fail")
+                    logging.info("event=emit_pipeline_result run_id=%s trace_id=%s symbol=%s tf=1m result=%s card=true telegram=%s postback=%s total_ms=%d", self.run_id, trace_id, symbol, result, telegram_status, postback_status, int((time.perf_counter() - started) * 1000))
             except Exception as exc:  # noqa: BLE001
                 logging.exception("Main loop error (service continues): %s", exc)
             time.sleep(self.settings.poll_seconds)
