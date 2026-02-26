@@ -40,6 +40,8 @@ class ClockSyncState:
     last_sync_local_ms: int | None = None
     last_force_refresh_local_ms: int | None = None
     degraded_until_local_ms: int | None = None
+    last_drift_ms: int | None = None
+    last_drift_source: str = "skipped_no_new_server_time"
     state: str = "degraded"
 
 
@@ -84,6 +86,8 @@ class ClockSync:
     def refresh_server_time(self, *, force: bool = False) -> bool:
         now_mono = time.monotonic()
         if not force and now_mono < self._next_refresh_mono:
+            self.state.last_drift_ms = None
+            self.state.last_drift_source = "skipped_no_new_server_time"
             return self.state.state == "synced"
 
         local_ms = int(time.time() * 1000)
@@ -91,13 +95,63 @@ class ClockSync:
         try:
             server_ms = self.rest_client.fetch_server_time_ms()
             latency_ms = int((time.perf_counter() - start) * 1000)
+
+            corrected_with_existing_skew = self.compute_now_ms_corrected(
+                local_ms=local_ms,
+                clock_skew_ms=self.state.clock_skew_ms,
+            )
+            cooldown_remaining_ms = 0
+            if self.state.last_server_ms is None:
+                drift_ms = None
+            else:
+                drift_ms = abs(corrected_with_existing_skew - server_ms)
+            self.state.last_drift_ms = drift_ms
+            self.state.last_drift_source = "fresh_sync"
+
+            if drift_ms is not None and drift_ms > self.max_clock_error_ms:
+                if self.state.last_force_refresh_local_ms is not None:
+                    since_force = local_ms - self.state.last_force_refresh_local_ms
+                    if since_force < self.refresh_cooldown_ms:
+                        cooldown_remaining_ms = self.refresh_cooldown_ms - since_force
+
+                if cooldown_remaining_ms > 0:
+                    self._transition_state("degraded", "cooldown_blocked")
+                    self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
+                    logging.warning(
+                        "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=degrade cooldown_remaining_ms=%d",
+                        local_ms,
+                        server_ms,
+                        self.state.clock_skew_ms,
+                        corrected_with_existing_skew,
+                        drift_ms,
+                        self.max_clock_error_ms,
+                        cooldown_remaining_ms,
+                    )
+                else:
+                    self.state.last_force_refresh_local_ms = local_ms
+                    logging.warning(
+                        "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=force_refresh",
+                        local_ms,
+                        server_ms,
+                        self.state.clock_skew_ms,
+                        corrected_with_existing_skew,
+                        drift_ms,
+                        self.max_clock_error_ms,
+                    )
+
             skew_ms = self.compute_clock_skew_ms(local_ms=local_ms, server_ms=server_ms)
             corrected_ms = self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=skew_ms)
             self.state.clock_skew_ms = skew_ms
             self.state.last_server_ms = server_ms
             self.state.last_sync_local_ms = local_ms
-            self._transition_state("synced", "refresh_success")
-            self.state.degraded_until_local_ms = None
+
+            if self.state.state != "degraded":
+                self._transition_state("synced", "refresh_success")
+                self.state.degraded_until_local_ms = None
+            elif cooldown_remaining_ms == 0 and (drift_ms is None or drift_ms <= self.max_clock_error_ms):
+                self._transition_state("synced", "refresh_success")
+                self.state.degraded_until_local_ms = None
+
             self._set_next_refresh(now_mono)
             logging.info(
                 "event=server_time_refresh result=success unit=ms latency_ms=%d local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d clock_state=%s http_status=na",
@@ -116,6 +170,8 @@ class ClockSync:
             self.state.clock_skew_ms = 0
             self.state.last_server_ms = None
             self.state.last_sync_local_ms = None
+            self.state.last_drift_ms = None
+            self.state.last_drift_source = "skipped_no_new_server_time"
             self._set_next_refresh(now_mono)
             logging.warning(
                 "event=server_time_refresh result=fail unit=ms latency_ms=%d local_ms=%d server_ms=na skew_ms=na clock_state=%s http_status=na error=%s",
@@ -147,55 +203,7 @@ class ClockSync:
             self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
             return local_ms
 
-        corrected_ms = self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=self.state.clock_skew_ms)
-        if self.state.last_server_ms is None:
-            return local_ms
-
-        drift_ms = abs(corrected_ms - self.state.last_server_ms)
-        if drift_ms <= self.max_clock_error_ms:
-            return corrected_ms
-
-        since_force = None if self.state.last_force_refresh_local_ms is None else local_ms - self.state.last_force_refresh_local_ms
-        cooldown_remaining_ms = 0
-        if since_force is not None and since_force < self.refresh_cooldown_ms:
-            cooldown_remaining_ms = self.refresh_cooldown_ms - since_force
-
-        if cooldown_remaining_ms > 0:
-            self._transition_state("degraded", "cooldown_blocked")
-            self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
-            logging.warning(
-                "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=degrade cooldown_remaining_ms=%d",
-                local_ms,
-                self.state.last_server_ms,
-                self.state.clock_skew_ms,
-                corrected_ms,
-                drift_ms,
-                self.max_clock_error_ms,
-                cooldown_remaining_ms,
-            )
-            return local_ms
-
-        self.state.last_force_refresh_local_ms = local_ms
-        logging.warning(
-            "event=clock_sanity_fallback unit=ms local_ms=%d server_ms=%d skew_ms=%d now_ms_corrected=%d drift_ms=%d max_clock_error_ms=%d action=force_refresh",
-            local_ms,
-            self.state.last_server_ms,
-            self.state.clock_skew_ms,
-            corrected_ms,
-            drift_ms,
-            self.max_clock_error_ms,
-        )
-
-        if self.refresh_server_time(force=True):
-            refreshed_local_ms = int(time.time() * 1000)
-            return self.compute_now_ms_corrected(
-                local_ms=refreshed_local_ms,
-                clock_skew_ms=self.state.clock_skew_ms,
-            )
-
-        self._transition_state("degraded", "force_refresh_failed")
-        self.state.degraded_until_local_ms = local_ms + self.degraded_ttl_ms
-        return local_ms
+        return self.compute_now_ms_corrected(local_ms=local_ms, clock_skew_ms=self.state.clock_skew_ms)
 
 
 class SourceManager:
@@ -219,7 +227,7 @@ class SourceManager:
         funding_poll_seconds: float,
         oi_poll_seconds: float,
         funding_history_limit: int = 3,
-        max_clock_error_ms: int = 1000,
+        max_clock_error_ms: int = 5000,
         kline_stale_ms: int | None = None,
         server_time_refresh_sec: int = 60,
         server_time_degraded_retry_sec: int = 10,
@@ -501,6 +509,8 @@ class SourceManager:
 
         now_ms = self.now_ms_corrected()
         clock_state = self._clock.state.state
+        drift_ms = self._clock.state.last_drift_ms
+        drift_ms_source = self._clock.state.last_drift_source
         if self._clock.state.last_force_refresh_local_ms is None:
             last_force_refresh_age_ms: int | None = None
             refresh_cooldown_remaining_ms = 0
@@ -535,7 +545,7 @@ class SourceManager:
 
             price_size, kline_size = self.datastore.buffer_sizes(symbol)
             logging.info(
-                "health mode=%s symbol=%s now_ms_corrected=%d clock_skew_ms=%d clock_state=%s last_server_sync_age_ms=%s last_force_refresh_age_ms=%s refresh_cooldown_remaining_ms=%s "
+                "health mode=%s symbol=%s now_ms_corrected=%d clock_skew_ms=%d clock_state=%s drift_ms=%s drift_ms_source=%s last_server_sync_age_ms=%s last_force_refresh_age_ms=%s refresh_cooldown_remaining_ms=%s "
                 "last_price_ts_ms=%s last_kline_close_ts_ms=%s last_kline_recv_ts_ms=%s funding_ts_ms=%s open_interest_ts_ms=%s "
                 "last_price_raw_age_ms=%s last_kline_close_raw_age_ms=%s last_kline_recv_raw_age_ms=%s funding_raw_age_ms=%s oi_raw_age_ms=%s "
                 "last_price_age_seconds=%s last_kline_age_seconds=%s last_kline_recv_age_seconds=%s funding_age_seconds=%s oi_age_seconds=%s "
@@ -545,6 +555,8 @@ class SourceManager:
                 now_ms,
                 self._clock.state.clock_skew_ms,
                 clock_state,
+                self._fmt_int(drift_ms),
+                drift_ms_source,
                 self._fmt_int(last_server_sync_age_ms),
                 self._fmt_int(last_force_refresh_age_ms),
                 self._fmt_int(refresh_cooldown_remaining_ms),

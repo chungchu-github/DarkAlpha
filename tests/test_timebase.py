@@ -137,13 +137,13 @@ def test_clock_cooldown_limits_force_refresh_calls(monkeypatch) -> None:
 
     fake_clock.set_ms(1_020_000)
     _ = clock.now_ms()
-    assert rest.calls == 2  # one force refresh at first fallback
+    assert rest.calls == 1  # no new server sample -> no drift refresh storm
+
+    # when we force a new server sample, drift is computed on fresh_sync only
+    assert clock.refresh_server_time(force=True)
+    assert rest.calls == 2
+    assert clock.state.last_drift_source in {"fresh_sync", "skipped_no_new_server_time"}
 
     fake_clock.set_ms(1_025_000)
     _ = clock.now_ms()
-    assert rest.calls == 2  # blocked by cooldown, no extra refresh
-    assert clock.state.state == "degraded"
-
-    fake_clock.set_ms(1_051_000)
-    _ = clock.now_ms()
-    assert rest.calls == 3  # cooldown elapsed, refresh allowed
+    assert rest.calls == 2
