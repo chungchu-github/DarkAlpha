@@ -1,0 +1,21 @@
+breakers:
+  - name: daily_loss
+    condition: daily_pnl_pct < -0.03      # -3% of equity in one day
+    action: halt_24h
+
+  - name: consecutive_losses
+    condition: consecutive_losing_trades >= 3
+    action: halt_12h
+
+  - name: api_error_spike
+    condition: api_errors_last_5min >= 5
+    action: halt_until_manual_reset
+
+  - name: volatility_spike
+    # BTC 1h ATR > 3x its 30-day average — unusually violent market
+    condition: btc_atr_1h > 3x_avg_30d
+    action: no_new_entries
+
+  - name: drawdown
+    condition: drawdown_from_peak > 0.10   # 10% drawdown from equity peak
+    action: halve_position_size

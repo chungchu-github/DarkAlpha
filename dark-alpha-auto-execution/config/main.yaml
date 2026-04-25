@@ -1,0 +1,11 @@
+mode: shadow          # shadow | live — never change to live without Gate 2 authorization
+exchange: binance
+gate: 1
+
+signal_receiver:
+  host: "127.0.0.1"
+  port: 8765
+
+logging:
+  level: INFO
+  dir: logs

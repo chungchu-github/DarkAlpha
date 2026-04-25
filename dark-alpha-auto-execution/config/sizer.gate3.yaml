@@ -1,0 +1,7 @@
+# Gate 3 (Scaled Live) — populated after Gate 2 authorization
+# DO NOT activate without signed gate-3-authorization.md
+risk_per_trade_pct: 0.01       # 1.0% absolute max per trade
+max_leverage: 3.0
+hard_notional_cap_usd: 0       # REQUIRED: set to user-declared cap before activation
+min_notional_usd: 10.0
+min_qty_step: 0.001

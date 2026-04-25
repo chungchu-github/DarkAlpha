@@ -1,0 +1,17 @@
+{
+  "symbol": "BTCUSDT",
+  "strategy": "vol_breakout_card",
+  "side": "LONG",
+  "entry": 94500.0,
+  "stop": 93200.0,
+  "leverage_suggest": 3,
+  "position_usdt": 500.0,
+  "max_risk_usdt": 25.0,
+  "ttl_minutes": 15,
+  "rationale": "BTC 15m breakout above compression zone, ATR expanding, OI fresh",
+  "created_at": "2026-04-18T02:00:00+00:00",
+  "priority": 40,
+  "confidence": 78.5,
+  "oi_status": "fresh",
+  "trace_id": "abc123def456"
+}

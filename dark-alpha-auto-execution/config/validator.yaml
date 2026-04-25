@@ -1,0 +1,10 @@
+# Signal validator thresholds — tune here, not in code
+min_ranking_score: 7.0          # Dark Alpha confidence/10 (0–10 scale). 7.0 = 70% confidence
+blocked_regimes:
+  - "compression"               # compression → alert only, not actionable
+  - "chaos"                     # chaotic markets not suitable for auto-execution
+
+trading_hours_utc:
+  enabled: false                # disabled for Gate 1 — crypto trades 24/7
+  start: "00:00"
+  end: "23:59"

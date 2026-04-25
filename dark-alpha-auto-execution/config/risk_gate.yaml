@@ -1,0 +1,4 @@
+max_concurrent_positions: 3    # max open positions at any time
+max_tickets_per_day: 5         # daily ticket cap (prevents runaway signal days)
+min_equity_to_trade: 1000.0    # pause if equity falls below this (USD)
+allow_duplicate_symbol: false  # Gate 1-2: no stacking positions on same symbol

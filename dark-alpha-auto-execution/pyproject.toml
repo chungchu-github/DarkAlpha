@@ -1,0 +1,67 @@
+[tool.poetry]
+name = "dark-alpha-auto-execution"
+version = "0.1.0"
+description = "Auto-execution layer for Dark Alpha trading signal engine"
+authors = ["Gene Huang"]
+readme = "README.md"
+packages = [
+    {include = "signal_adapter", from = "src"},
+    {include = "storage", from = "src"},
+    {include = "observability", from = "src"},
+    {include = "safety", from = "src"},
+    {include = "cli", from = "src"},
+    {include = "strategy", from = "src"},
+    {include = "execution", from = "src"},
+    {include = "market_data", from = "src"},
+    {include = "reporting", from = "src"},
+    {include = "scheduler", from = "src"},
+    {include = "telegram", from = "src"},
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115"
+uvicorn = {extras = ["standard"], version = "^0.34"}
+pydantic = "^2.10"
+structlog = "^25.1"
+python-ulid = "^3.0"
+pyyaml = "^6.0"
+python-dotenv = "^1.0"
+click = "^8.1"
+httpx = "^0.28"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-cov = "^6.0"
+pytest-asyncio = "^0.25"
+ruff = "^0.9"
+mypy = "^1.13"
+types-pyyaml = "^6.0"
+
+[tool.poetry.scripts]
+dark-alpha = "cli.main:cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/migrations/*"]

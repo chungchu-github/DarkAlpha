@@ -1,0 +1,7 @@
+# Gate 1 (Shadow Mode) position sizing — paper money, conservative defaults
+risk_per_trade_pct: 0.005      # 0.5% of equity per trade
+max_leverage: 3.0
+hard_notional_cap_usd: 100000  # paper money ceiling — no real impact
+min_notional_usd: 10.0         # below this, reject (below exchange minimum)
+min_qty_step: 0.001            # BTC minimum lot size on Binance
+starting_equity_usd: 10000.0   # simulated starting capital for shadow mode
