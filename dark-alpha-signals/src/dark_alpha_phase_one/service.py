@@ -102,6 +102,112 @@ class DerivativesGate:
     oi_raw_age_ms: int | None
     reason: str
 
+
+@dataclass(frozen=True)
+class MarketHealthGate:
+    allow: bool
+    status: str
+    reason: str
+    price_raw_age_ms: int | None
+    kline_recv_raw_age_ms: int | None
+    kline_close_raw_age_ms: int | None
+    funding_raw_age_ms: int | None
+    oi_raw_age_ms: int | None
+    oi_status: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "price_raw_age_ms": self.price_raw_age_ms,
+            "kline_recv_raw_age_ms": self.kline_recv_raw_age_ms,
+            "kline_close_raw_age_ms": self.kline_close_raw_age_ms,
+            "funding_raw_age_ms": self.funding_raw_age_ms,
+            "oi_raw_age_ms": self.oi_raw_age_ms,
+            "oi_status": self.oi_status,
+        }
+
+
+def _health_status(allow: bool) -> str:
+    return "fresh" if allow else "blocked"
+
+
+def market_data_is_fresh(
+    snapshot: SymbolSnapshot,
+    *,
+    now_ms_corrected: int,
+    price_stale_ms: int,
+    kline_stale_ms: int,
+    funding_stale_ms: int,
+    oi_stale_ms: int,
+) -> MarketHealthGate:
+    price_raw_age_ms = SourceManager.raw_age_ms(
+        now_ms_corrected,
+        SourceManager.dt_to_ms(snapshot.last_price_ts),
+    )
+    kline_recv_raw_age_ms = SourceManager.raw_age_ms(
+        now_ms_corrected,
+        SourceManager.dt_to_ms(snapshot.last_kline_recv_ts),
+    )
+    kline_close_raw_age_ms = SourceManager.raw_age_ms(
+        now_ms_corrected,
+        SourceManager.dt_to_ms(snapshot.last_kline_close_ts),
+    )
+    derivatives_gate = derivatives_are_fresh(
+        snapshot,
+        now_ms_corrected=now_ms_corrected,
+        funding_stale_ms=funding_stale_ms,
+        oi_stale_ms=oi_stale_ms,
+    )
+
+    if price_raw_age_ms is None:
+        reason = "price_missing"
+        allow = False
+    elif price_raw_age_ms > price_stale_ms:
+        reason = "price_stale"
+        allow = False
+    elif kline_recv_raw_age_ms is None:
+        reason = "kline_missing"
+        allow = False
+    elif kline_recv_raw_age_ms > kline_stale_ms:
+        reason = "kline_stale"
+        allow = False
+    elif not derivatives_gate.allow:
+        reason = derivatives_gate.reason
+        allow = False
+    else:
+        reason = "ok"
+        allow = True
+
+    logging.info(
+        "market_health_gate unit=ms symbol=%s mode=%s allow=%s reason=%s price_raw_age_ms=%s price_threshold_ms=%d kline_recv_raw_age_ms=%s kline_threshold_ms=%d funding_raw_age_ms=%s funding_threshold_ms=%d oi_raw_age_ms=%s oi_threshold_ms=%d oi_status=%s",
+        snapshot.symbol,
+        snapshot.data_source_mode,
+        str(allow).lower(),
+        reason,
+        "na" if price_raw_age_ms is None else str(price_raw_age_ms),
+        price_stale_ms,
+        "na" if kline_recv_raw_age_ms is None else str(kline_recv_raw_age_ms),
+        kline_stale_ms,
+        "na" if derivatives_gate.funding_raw_age_ms is None else str(derivatives_gate.funding_raw_age_ms),
+        funding_stale_ms,
+        "na" if derivatives_gate.oi_raw_age_ms is None else str(derivatives_gate.oi_raw_age_ms),
+        oi_stale_ms,
+        derivatives_gate.oi_status,
+    )
+
+    return MarketHealthGate(
+        allow=allow,
+        status=_health_status(allow),
+        reason=reason,
+        price_raw_age_ms=price_raw_age_ms,
+        kline_recv_raw_age_ms=kline_recv_raw_age_ms,
+        kline_close_raw_age_ms=kline_close_raw_age_ms,
+        funding_raw_age_ms=derivatives_gate.funding_raw_age_ms,
+        oi_raw_age_ms=derivatives_gate.oi_raw_age_ms,
+        oi_status=derivatives_gate.oi_status,
+    )
+
 def derivatives_are_fresh(
     snapshot: SymbolSnapshot,
     *,
@@ -137,8 +243,17 @@ def derivatives_are_fresh(
     if oi_raw_age_ms is not None:
         oi_status = "stale" if oi_raw_age_ms > oi_stale_ms else "fresh"
 
-    skip = funding_stale
-    reason = "funding_stale" if funding_stale else "ok"
+    oi_missing = oi_raw_age_ms is None
+    oi_stale = oi_raw_age_ms is not None and oi_raw_age_ms > oi_stale_ms
+    skip = funding_stale or oi_missing or oi_stale
+    if funding_stale:
+        reason = "funding_stale"
+    elif oi_missing:
+        reason = "oi_missing"
+    elif oi_stale:
+        reason = "oi_stale"
+    else:
+        reason = "ok"
 
     logging.info(
         "derivatives_stale_check unit=ms symbol=%s mode=%s now_ms_corrected=%d funding_raw_age_ms=%d funding_threshold_ms=%d oi_raw_age_ms=%s oi_threshold_ms=%d oi_status=%s skip=%s reason=%s",
@@ -216,13 +331,17 @@ class SignalService:
             ),
             last_sent_lookup=self.risk_engine.get_last_trigger_time,
         )
+        leverage_fake_breakout = min(50, settings.max_leverage_display)
+        leverage_funding_oi = min(35, settings.max_leverage_display)
+        leverage_liquidation = min(30, settings.max_leverage_display)
+        leverage_vol = min(settings.leverage_suggest, settings.max_leverage_display)
         self.strategies: list[Strategy] = [
             FakeBreakoutReversalStrategy(
                 sweep_pct=settings.sweep_pct,
                 wick_body_ratio=settings.wick_body_ratio,
                 stop_buffer_atr=settings.stop_buffer_atr,
                 min_atr_pct=settings.min_atr_pct,
-                leverage_suggest=50,
+                leverage_suggest=leverage_fake_breakout,
                 max_risk_usdt=settings.max_risk_usdt,
                 ttl_minutes=5,
                 priority=settings.priority_fake_breakout,
@@ -230,14 +349,14 @@ class SignalService:
             FundingOiSkewStrategy(
                 funding_extreme=settings.funding_extreme,
                 oi_zscore_threshold=settings.oi_zscore,
-                leverage_suggest=35,
+                leverage_suggest=leverage_funding_oi,
                 max_risk_usdt=settings.max_risk_usdt,
                 ttl_minutes=12,
                 priority=settings.priority_funding_oi_skew,
             ),
             LiquidationFollowStrategy(
                 oi_delta_pct_threshold=settings.oi_delta_pct,
-                leverage_suggest=30,
+                leverage_suggest=leverage_liquidation,
                 max_risk_usdt=settings.max_risk_usdt,
                 ttl_minutes=10,
                 priority=settings.priority_liquidation_follow,
@@ -245,7 +364,7 @@ class SignalService:
             VolBreakoutStrategy(
                 return_threshold=settings.return_threshold,
                 atr_spike_multiplier=settings.atr_spike_multiplier,
-                leverage_suggest=settings.leverage_suggest,
+                leverage_suggest=leverage_vol,
                 max_risk_usdt=settings.max_risk_usdt,
                 ttl_minutes=settings.ttl_minutes,
                 priority=settings.priority_vol_breakout,
@@ -306,17 +425,20 @@ class SignalService:
             side="LONG",
             entry=entry,
             stop=stop,
-            leverage_suggest=self.settings.leverage_suggest,
+            leverage_suggest=min(self.settings.leverage_suggest, self.settings.max_leverage_display),
             position_usdt=position_usdt,
             max_risk_usdt=self.settings.max_risk_usdt,
             ttl_minutes=5,
             rationale="TEST DRYRUN emit for pipeline verification",
             priority=10_000,
             confidence=100.0,
+            take_profit=entry * 1.004,
+            invalid_condition=f"test invalid if stop {stop:.4f} is touched",
+            risk_level="test",
             oi_status="fresh",
         )
 
-    def _maybe_test_emit(self, symbol: str, snapshot: SymbolSnapshot, derivatives_gate: DerivativesGate) -> tuple[ProposalCard | None, str | None]:
+    def _maybe_test_emit(self, symbol: str, snapshot: SymbolSnapshot, market_health: MarketHealthGate) -> tuple[ProposalCard | None, str | None]:
         if not self.settings.test_emit_enabled:
             return None, None
         if symbol not in self.settings.test_emit_symbols:
@@ -340,9 +462,13 @@ class SignalService:
             atr=None,
             trend_score=None,
             price_dist_pct=None,
-            derivatives_ok=derivatives_gate.allow,
+            derivatives_ok=market_health.allow,
         )
-        return replace(card, oi_status=derivatives_gate.oi_status), trace_id
+        return replace(
+            card,
+            oi_status=market_health.oi_status,
+            data_health=market_health.to_payload(),
+        ), trace_id
 
     def evaluate_symbol(self, symbol: str) -> tuple[ProposalCard | None, str | None]:
         snapshot = self.datastore.snapshot(symbol)
@@ -352,23 +478,26 @@ class SignalService:
             return None, None
 
         now_ms_corrected = self.source_manager.now_ms_corrected()
-        derivatives_gate = derivatives_are_fresh(
+        market_health = market_data_is_fresh(
             snapshot,
             now_ms_corrected=now_ms_corrected,
+            price_stale_ms=self.settings.stale_seconds * 1000,
+            kline_stale_ms=self.settings.kline_stale_ms,
             funding_stale_ms=self.settings.funding_stale_ms,
             oi_stale_ms=self.settings.oi_stale_ms,
         )
-        if not derivatives_gate.allow:
+        if not market_health.allow:
             logging.info(
-                "Derivatives stale for %s, skip card generation reason=%s funding_raw_age_ms=%s oi_raw_age_ms=%s oi_status=%s",
+                "Market data unhealthy for %s, skip card generation reason=%s price_raw_age_ms=%s kline_recv_raw_age_ms=%s funding_raw_age_ms=%s oi_raw_age_ms=%s oi_status=%s",
                 symbol,
-                derivatives_gate.reason,
-                derivatives_gate.funding_raw_age_ms,
-                derivatives_gate.oi_raw_age_ms,
-                derivatives_gate.oi_status,
+                market_health.reason,
+                market_health.price_raw_age_ms,
+                market_health.kline_recv_raw_age_ms,
+                market_health.funding_raw_age_ms,
+                market_health.oi_raw_age_ms,
+                market_health.oi_status,
             )
-            stale_reason = "data_stale" if derivatives_gate.reason == "funding_missing" else "derivatives_stale"
-            self._log_signal_decision(symbol=symbol, decision="blocked", reason=stale_reason, trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=False)
+            self._log_signal_decision(symbol=symbol, decision="blocked", reason=market_health.reason, trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=False)
             return None, None
 
         if snapshot.last_funding_rate is None or snapshot.open_interest is None or snapshot.mark_price is None:
@@ -387,7 +516,7 @@ class SignalService:
                     ATR_PERIOD_15M,
                 )
                 self._atr_warmup_logged_symbols.add(symbol)
-            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, derivatives_gate)
+            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, market_health)
             if test_card is not None:
                 return test_card, test_trace
             self._log_signal_decision(symbol=symbol, decision="no_signal", reason="atr_warmup", trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=True)
@@ -411,7 +540,7 @@ class SignalService:
                 atr_need_bars_1m,
                 ATR_PERIOD_15M,
             )
-            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, derivatives_gate)
+            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, market_health)
             if test_card is not None:
                 return test_card, test_trace
             self._log_signal_decision(symbol=symbol, decision="no_signal", reason="atr_unavailable", trace_id=None, atr=None, trend_score=None, price_dist_pct=None, derivatives_ok=True)
@@ -422,7 +551,7 @@ class SignalService:
         candidates = self._collect_strategy_cards(signal_context)
         card = self.arbitrator.choose_best(candidates, signal_context)
         if card is None:
-            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, derivatives_gate)
+            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, market_health)
             if test_card is not None:
                 return test_card, test_trace
             self._log_signal_decision(symbol=symbol, decision="no_signal", reason="strategy_no_card", trace_id=None, atr=signal_context.atr_15m, trend_score=signal_context.return_5m, price_dist_pct=abs(signal_context.price - signal_context.mark_price) / signal_context.price if signal_context.price else None, derivatives_ok=True)
@@ -431,7 +560,7 @@ class SignalService:
         risk_decision = self.risk_engine.evaluate(symbol)
         if not risk_decision.allowed:
             logging.info("Risk blocked %s: %s", symbol, risk_decision.reason)
-            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, derivatives_gate)
+            test_card, test_trace = self._maybe_test_emit(symbol, snapshot, market_health)
             if test_card is not None:
                 return test_card, test_trace
             self._log_signal_decision(symbol=symbol, decision="blocked", reason=risk_decision.reason, trace_id=None, atr=signal_context.atr_15m, trend_score=signal_context.return_5m, price_dist_pct=abs(signal_context.price - signal_context.mark_price) / signal_context.price if signal_context.price else None, derivatives_ok=True)
@@ -440,7 +569,11 @@ class SignalService:
         trace_id = uuid4().hex
         self._log_signal_decision(symbol=symbol, decision="emit", reason="ok", trace_id=trace_id, atr=signal_context.atr_15m, trend_score=signal_context.return_5m, price_dist_pct=abs(signal_context.price - signal_context.mark_price) / signal_context.price if signal_context.price else None, derivatives_ok=True)
         self.risk_engine.record_trigger(symbol)
-        return replace(card, oi_status=derivatives_gate.oi_status), trace_id
+        return replace(
+            card,
+            oi_status=market_health.oi_status,
+            data_health=market_health.to_payload(),
+        ), trace_id
 
     def _collect_strategy_cards(self, signal_context: SignalContext) -> list[ProposalCard]:
         cards: list[ProposalCard] = []

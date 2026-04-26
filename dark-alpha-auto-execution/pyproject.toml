@@ -16,6 +16,7 @@ packages = [
     {include = "reporting", from = "src"},
     {include = "scheduler", from = "src"},
     {include = "telegram", from = "src"},
+    {include = "backtest", from = "src"},
 ]
 
 [tool.poetry.dependencies]

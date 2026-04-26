@@ -20,9 +20,16 @@ def db_path(tmp_path: Path) -> Path:
 def client(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("DB_PATH", str(db_path))
     # Re-import app after env var is set so get_db picks up the new path
-    from signal_adapter.receiver import app
+    import signal_adapter.receiver as receiver
+    from safety.kill_switch import KillSwitch
 
-    return TestClient(app)
+    monkeypatch.setattr(
+        receiver,
+        "get_kill_switch",
+        lambda: KillSwitch(sentinel_path=db_path.parent / "test-kill"),
+    )
+
+    return TestClient(receiver.app)
 
 
 VALID_PAYLOAD = {
@@ -39,7 +46,11 @@ VALID_PAYLOAD = {
     "created_at": "2026-04-18T02:00:00+00:00",
     "priority": 40,
     "confidence": 78.5,
+    "take_profit": 97100.0,
+    "invalid_condition": "invalid if stop is touched",
+    "risk_level": "medium",
     "oi_status": "fresh",
+    "data_health": {"status": "fresh", "reason": "ok"},
     "trace_id": "test-trace-001",
 }
 
@@ -74,6 +85,28 @@ def test_post_signal_persists_to_sqlite(client: TestClient, db_path: Path) -> No
     assert row is not None
     assert row[0] == "test-trace-001"
     assert row[1] == "BTCUSDT-PERP"
+
+
+def test_post_signal_writes_signal_journal(client: TestClient, db_path: Path) -> None:
+    client.post("/signal", json=VALID_PAYLOAD)
+
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    journal = conn.execute(
+        "SELECT event_id, strategy, data_health_status FROM signal_journal"
+    ).fetchone()
+    outcomes = conn.execute(
+        "SELECT COUNT(*) FROM signal_outcomes WHERE event_id='test-trace-001'"
+    ).fetchone()
+    conn.close()
+
+    assert journal is not None
+    assert journal[0] == "test-trace-001"
+    assert journal[1] == "vol_breakout_card"
+    assert journal[2] == "fresh"
+    assert outcomes is not None
+    assert outcomes[0] == 4
 
 
 def test_post_duplicate_signal_is_ignored(client: TestClient) -> None:

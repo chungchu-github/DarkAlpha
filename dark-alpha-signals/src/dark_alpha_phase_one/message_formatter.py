@@ -65,6 +65,15 @@ def _is_test_payload(payload: dict[str, Any]) -> bool:
     return "test" in strategy or "dryrun" in strategy or priority >= 9000
 
 
+def _data_health(payload: dict[str, Any]) -> tuple[str, str]:
+    raw = payload.get("data_health")
+    if not isinstance(raw, dict):
+        return "na", "na"
+    status = str(raw.get("status") or "na")
+    reason = str(raw.get("reason") or "na")
+    return status, reason
+
+
 def _label_side(side: str) -> tuple[str, str]:
     side_upper = side.upper()
     if side_upper == "LONG":
@@ -119,6 +128,7 @@ def format_signal_message(payload: dict[str, Any]) -> tuple[str, str]:
     decimals = _price_decimals(payload)
     entry = _format_number(payload.get("entry"), decimals=decimals)
     stop = _format_number(payload.get("stop"), decimals=decimals)
+    take_profit = _format_number(payload.get("take_profit"), decimals=decimals)
 
     leverage = _to_int(payload.get("leverage_suggest"))
     leverage_text = f"{leverage}x" if leverage is not None else "na"
@@ -127,6 +137,9 @@ def format_signal_message(payload: dict[str, Any]) -> tuple[str, str]:
     ttl = _to_int(payload.get("ttl_minutes"))
     ttl_text = f"{ttl} 分鐘" if ttl is not None else "na"
     confidence = _format_percent(payload.get("confidence"))
+    health_status, health_reason = _data_health(payload)
+    risk_level = escape(str(payload.get("risk_level") or "na"))
+    invalid_condition = escape(str(payload.get("invalid_condition") or "na"))
 
     rationale = str(payload.get("rationale") or "na").strip() or "na"
     rationale = rationale[:160] + ("…" if len(rationale) > 160 else "")
@@ -136,12 +149,16 @@ def format_signal_message(payload: dict[str, Any]) -> tuple[str, str]:
         f"<b>{emoji} {symbol} {side_text}{test_suffix}</b>",
         f"📍 <b>入場：</b>{entry}",
         f"🛑 <b>止損：</b>{stop}",
+        f"🎯 <b>止盈：</b>{take_profit}",
         f"⚡ <b>槓桿：</b>{escape(leverage_text)}",
         "",
         f"💰 <b>倉位：</b>{position} USDT" if position != "na" else "💰 <b>倉位：</b>na",
         f"🎯 <b>最大風險：</b>{risk} USDT" if risk != "na" else "🎯 <b>最大風險：</b>na",
         f"⏳ <b>有效：</b>{ttl_text}",
         f"📊 <b>信心：</b>{confidence}",
+        f"⚠️ <b>風險：</b>{risk_level}",
+        f"🩺 <b>資料：</b>{escape(health_status)} / {escape(health_reason)}",
+        f"🚫 <b>失效：</b>{invalid_condition}",
         "",
         "🧠 <b>理由：</b>",
         rationale,
@@ -161,7 +178,8 @@ def format_copy_levels_message(payload: dict[str, Any]) -> str:
     decimals = _price_decimals(payload)
     entry = _format_number(payload.get("entry"), decimals=decimals)
     stop = _format_number(payload.get("stop"), decimals=decimals)
-    return f"<code>{escape(symbol)} {escape(side)}\nENTRY {entry}\nSTOP {stop}</code>"
+    take_profit = _format_number(payload.get("take_profit"), decimals=decimals)
+    return f"<code>{escape(symbol)} {escape(side)}\nENTRY {entry}\nSTOP {stop}\nTAKE_PROFIT {take_profit}</code>"
 
 
 def format_detail_message(payload: dict[str, Any]) -> str:
@@ -172,11 +190,26 @@ def format_detail_message(payload: dict[str, Any]) -> str:
         f"side: {escape(str(payload.get('side') or 'na'))}",
         f"entry: {_format_number(payload.get('entry'), decimals=decimals)}",
         f"stop: {_format_number(payload.get('stop'), decimals=decimals)}",
+        f"take_profit: {_format_number(payload.get('take_profit'), decimals=decimals)}",
         f"leverage: {escape(str(payload.get('leverage_suggest') or 'na'))}",
         f"position: {_format_number(payload.get('position_usdt'), decimals=2)}",
         f"risk: {_format_number(payload.get('max_risk_usdt'), decimals=2)}",
         f"ttl: {escape(str(payload.get('ttl_minutes') or 'na'))}",
         f"confidence: {_format_percent(payload.get('confidence'))}",
+        f"risk_level: {escape(str(payload.get('risk_level') or 'na'))}",
+        f"invalid_condition: {escape(str(payload.get('invalid_condition') or 'na'))}",
         f"oi_status: {escape(str(payload.get('oi_status') or 'na'))}",
     ]
+    data_health = payload.get("data_health")
+    if isinstance(data_health, dict):
+        lines.extend(
+            [
+                f"data_health.status: {escape(str(data_health.get('status') or 'na'))}",
+                f"data_health.reason: {escape(str(data_health.get('reason') or 'na'))}",
+                f"price_age_ms: {escape(str(data_health.get('price_raw_age_ms') or 'na'))}",
+                f"kline_recv_age_ms: {escape(str(data_health.get('kline_recv_raw_age_ms') or 'na'))}",
+                f"funding_age_ms: {escape(str(data_health.get('funding_raw_age_ms') or 'na'))}",
+                f"oi_age_ms: {escape(str(data_health.get('oi_raw_age_ms') or 'na'))}",
+            ]
+        )
     return "\n".join(lines)

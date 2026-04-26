@@ -1,6 +1,25 @@
-mode: shadow          # shadow | live — never change to live without Gate 2 authorization
+mode: shadow         # shadow | live — never flip to live without explicit Gate authorization
 exchange: binance
 gate: 1
+
+live:
+  environment: testnet        # testnet | mainnet
+  allow_mainnet: false
+  require_gate_authorization: true
+  gate_authorization_file: docs/gate-6-authorization.md
+  micro_live:
+    enabled: false             # flip true only inside an active Gate 6 exercise window
+    allowed_symbols:
+      - BTCUSDT-PERP
+    max_notional_usd: 100
+    max_leverage: 1
+    max_daily_loss_usd: 5
+    max_concurrent_positions: 1
+    require_stop_loss: true
+    require_take_profit: true
+    exercise_window_start: ""  # ISO8601 UTC, set per Gate 6 authorization
+    exercise_window_end: ""
+    auto_cancel_flatten_after: true
 
 signal_receiver:
   host: "127.0.0.1"

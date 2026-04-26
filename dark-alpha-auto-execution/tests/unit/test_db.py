@@ -28,6 +28,10 @@ def test_init_db_creates_all_tables(tmp_path: Path) -> None:
     assert "orders" in tables
     assert "trades" in tables
     assert "daily_snapshots" in tables
+    assert "signal_journal" in tables
+    assert "signal_outcomes" in tables
+    assert "order_idempotency" in tables
+    assert "reconciliation_runs" in tables
 
 
 def test_init_db_idempotent(tmp_path: Path) -> None:
@@ -68,3 +72,17 @@ def test_get_db_wal_mode_enabled(tmp_path: Path) -> None:
     with get_db(db_file) as conn:
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     assert mode == "wal"
+
+
+def test_get_db_applies_new_migrations_to_existing_file(tmp_path: Path) -> None:
+    db_file = tmp_path / "legacy.db"
+    sqlite3.connect(db_file).close()
+
+    with get_db(db_file) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+
+    assert "order_idempotency" in tables
+    assert "reconciliation_runs" in tables

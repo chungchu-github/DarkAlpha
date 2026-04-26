@@ -35,6 +35,7 @@ class FundingOiSkewStrategy(Strategy):
         side = "SHORT" if crowded_long else "LONG"
         entry = signal_context.price
         stop = entry + signal_context.atr_15m if side == "SHORT" else entry - signal_context.atr_15m
+        take_profit = entry - (stop - entry) * 2 if side == "SHORT" else entry + (entry - stop) * 2
         position_usdt = calculate_position_usdt(entry=entry, stop=stop, max_risk_usdt=self.max_risk_usdt)
         confidence = min(
             100.0,
@@ -57,4 +58,7 @@ class FundingOiSkewStrategy(Strategy):
             strategy=self.name,
             priority=self.priority,
             confidence=confidence,
+            take_profit=take_profit,
+            invalid_condition=f"invalid if crowded positioning persists and stop {stop:.4f} is touched",
+            risk_level="medium" if self.leverage_suggest <= 5 else "high",
         )

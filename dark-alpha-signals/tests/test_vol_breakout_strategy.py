@@ -39,6 +39,10 @@ def test_vol_breakout_generates_long_card_on_return_trigger() -> None:
     assert card is not None
     assert card.strategy == "vol_breakout_card"
     assert card.side == "LONG"
+    assert card.take_profit is not None
+    assert card.take_profit > card.entry
+    assert card.invalid_condition
+    assert card.risk_level == "high"
 
 
 def test_vol_breakout_returns_none_without_trigger() -> None:

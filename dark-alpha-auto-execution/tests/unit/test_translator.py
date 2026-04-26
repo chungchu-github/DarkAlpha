@@ -39,7 +39,11 @@ def make_card(**overrides: object) -> ProposalCardPayload:
         "created_at": "2026-04-18T02:00:00+00:00",
         "priority": 40,
         "confidence": 78.5,
+        "take_profit": 97100.0,
+        "invalid_condition": "invalid if stop is touched",
+        "risk_level": "medium",
         "oi_status": "fresh",
+        "data_health": {"status": "fresh", "reason": "ok"},
         "trace_id": "abc123def456",
     }
     defaults.update(overrides)
@@ -202,6 +206,10 @@ def test_metadata_fields_present() -> None:
     assert event.metadata["ttl_minutes"] == 15
     assert event.metadata["priority"] == 40
     assert event.metadata["oi_status"] == "fresh"
+    assert event.metadata["data_health"] == {"status": "fresh", "reason": "ok"}
+    assert event.metadata["take_profit_price"] == 97100.0
+    assert event.metadata["invalid_condition"] == "invalid if stop is touched"
+    assert event.metadata["risk_level"] == "medium"
 
 
 def test_returns_setup_event_instance() -> None:
@@ -264,6 +272,36 @@ def test_setup_event_rejects_invalid_direction() -> None:
             trigger=None,
             invalidation=None,
         )
+
+
+def test_translator_preserves_ttl_minutes_for_validator() -> None:
+    """Translator must propagate ttl_minutes so the validator's freshness gate
+    has data to work with (Task 9)."""
+    card = make_card(ttl_minutes=42)
+    event = proposal_card_to_setup_event(card)
+    assert event.metadata.get("ttl_minutes") == 42
+
+
+def test_translator_preserves_timestamp_for_validator() -> None:
+    """Translator must keep created_at intact in event.timestamp."""
+    card = make_card(created_at="2026-04-18T02:00:00+00:00")
+    event = proposal_card_to_setup_event(card)
+    assert event.timestamp == "2026-04-18T02:00:00+00:00"
+
+
+def test_translated_stale_card_is_rejected_by_validator() -> None:
+    """End-to-end: a stale ProposalCard must not survive translator + validator."""
+    from strategy import config, validator
+
+    config.clear_cache()
+    card = make_card(
+        created_at="2020-01-01T00:00:00+00:00",  # very old
+        ttl_minutes=15,
+    )
+    event = proposal_card_to_setup_event(card)
+    rej = validator.validate(event)
+    assert rej is not None
+    assert rej.reason == "signal_expired"
 
 
 def test_setup_event_allows_none_direction() -> None:

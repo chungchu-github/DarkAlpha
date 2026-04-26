@@ -1,5 +1,6 @@
 """Shared fixtures for strategy + execution tests."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -7,11 +8,16 @@ import pytest
 from signal_adapter.schemas import InvalidationInfo, SetupEvent, TriggerInfo
 
 
+def _fresh_timestamp() -> str:
+    """ISO8601 UTC 'now' — keeps fixtures inside the validator TTL window."""
+    return datetime.now(tz=UTC).isoformat()
+
+
 @pytest.fixture()
 def setup_event() -> SetupEvent:
     return SetupEvent(
         event_id="evt-test-001",
-        timestamp="2026-04-18T02:00:00+00:00",
+        timestamp=_fresh_timestamp(),
         symbol="BTCUSDT-PERP",
         setup_type="active",
         direction="long",
@@ -20,7 +26,7 @@ def setup_event() -> SetupEvent:
         ranking_score=7.85,
         trigger=TriggerInfo(condition="breakout", price_level=100.0, timeframe="15m"),
         invalidation=InvalidationInfo(condition="stop", price_level=99.0),
-        metadata={},
+        metadata={"ttl_minutes": 60},
     )
 
 
@@ -28,7 +34,7 @@ def setup_event() -> SetupEvent:
 def short_event() -> SetupEvent:
     return SetupEvent(
         event_id="evt-test-short",
-        timestamp="2026-04-18T02:00:00+00:00",
+        timestamp=_fresh_timestamp(),
         symbol="ETHUSDT-PERP",
         setup_type="active",
         direction="short",
@@ -37,7 +43,7 @@ def short_event() -> SetupEvent:
         ranking_score=8.0,
         trigger=TriggerInfo(condition="trigger", price_level=100.0, timeframe="15m"),
         invalidation=InvalidationInfo(condition="stop", price_level=101.0),
-        metadata={},
+        metadata={"ttl_minutes": 60},
     )
 
 

@@ -61,7 +61,7 @@ def test_derivatives_gate_blocks_funding_stale() -> None:
     assert gate.reason == "funding_stale"
 
 
-def test_derivatives_gate_allows_oi_stale_with_status() -> None:
+def test_derivatives_gate_blocks_oi_stale() -> None:
     now = datetime.now(tz=timezone.utc)
     now_ms = SourceManager.dt_to_ms(now)
     assert now_ms is not None
@@ -73,8 +73,9 @@ def test_derivatives_gate_allows_oi_stale_with_status() -> None:
         funding_stale_ms=180_000,
         oi_stale_ms=120_000,
     )
-    assert gate.allow
+    assert gate.allow is False
     assert gate.oi_status == "stale"
+    assert gate.reason == "oi_stale"
 
 
 def test_should_emit_test_allows_initial_emit() -> None:

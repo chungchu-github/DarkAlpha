@@ -77,5 +77,9 @@ class ProposalCardPayload(BaseModel):
     created_at: str
     priority: int
     confidence: float  # 0–100
+    take_profit: float | None = None
+    invalid_condition: str = ""
+    risk_level: str = "medium"
     oi_status: str = "fresh"
+    data_health: dict[str, Any] = Field(default_factory=dict)
     trace_id: str = ""

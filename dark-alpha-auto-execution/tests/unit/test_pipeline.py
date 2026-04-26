@@ -14,7 +14,11 @@ from strategy.schemas import ExecutionTicket, Rejection
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache() -> None:
+def _clear_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    (cfg / "main.yaml").write_text("mode: shadow\n")
+    monkeypatch.setattr(config, "_CONFIG_DIR", cfg)
     config.clear_cache()
 
 

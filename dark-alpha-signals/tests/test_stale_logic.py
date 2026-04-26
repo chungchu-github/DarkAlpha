@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from dark_alpha_phase_one.calculations import Candle
 from dark_alpha_phase_one.data.datastore import FundingRatePoint, SymbolSnapshot
 from dark_alpha_phase_one.data.source_manager import SourceManager
-from dark_alpha_phase_one.service import derivatives_are_fresh
+from dark_alpha_phase_one.service import derivatives_are_fresh, market_data_is_fresh
 
 
 def _snapshot(now: datetime) -> SymbolSnapshot:
@@ -49,7 +49,7 @@ def test_health_age_and_derivatives_gating_are_consistent() -> None:
     assert gate.allow
 
 
-def test_derivatives_gating_allows_oi_stale_but_marks_status() -> None:
+def test_derivatives_gating_blocks_oi_stale() -> None:
     now = datetime.now(tz=timezone.utc)
     now_ms = SourceManager.dt_to_ms(now)
     assert now_ms is not None
@@ -63,5 +63,44 @@ def test_derivatives_gating_allows_oi_stale_but_marks_status() -> None:
         funding_stale_ms=180_000,
         oi_stale_ms=120_000,
     )
-    assert gate.allow
+    assert gate.allow is False
     assert gate.oi_status == "stale"
+    assert gate.reason == "oi_stale"
+
+
+def test_market_health_gate_blocks_price_stale() -> None:
+    now = datetime.now(tz=timezone.utc)
+    now_ms = SourceManager.dt_to_ms(now)
+    assert now_ms is not None
+    snap = replace(_snapshot(now), last_price_ts=now - timedelta(seconds=10))
+
+    gate = market_data_is_fresh(
+        snap,
+        now_ms_corrected=now_ms,
+        price_stale_ms=5_000,
+        kline_stale_ms=30_000,
+        funding_stale_ms=180_000,
+        oi_stale_ms=180_000,
+    )
+
+    assert gate.allow is False
+    assert gate.reason == "price_stale"
+
+
+def test_market_health_gate_blocks_kline_stale() -> None:
+    now = datetime.now(tz=timezone.utc)
+    now_ms = SourceManager.dt_to_ms(now)
+    assert now_ms is not None
+    snap = replace(_snapshot(now), last_kline_recv_ts=now - timedelta(seconds=45))
+
+    gate = market_data_is_fresh(
+        snap,
+        now_ms_corrected=now_ms,
+        price_stale_ms=5_000,
+        kline_stale_ms=30_000,
+        funding_stale_ms=180_000,
+        oi_stale_ms=180_000,
+    )
+
+    assert gate.allow is False
+    assert gate.reason == "kline_stale"

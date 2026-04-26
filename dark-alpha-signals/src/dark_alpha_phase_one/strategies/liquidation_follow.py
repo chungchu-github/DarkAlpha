@@ -35,6 +35,7 @@ class LiquidationFollowStrategy(Strategy):
         side = "LONG" if signal_context.return_5m > 0 else "SHORT"
         entry = signal_context.price
         stop = entry - (1.5 * signal_context.atr_15m) if side == "LONG" else entry + (1.5 * signal_context.atr_15m)
+        take_profit = entry + (entry - stop) * 2 if side == "LONG" else entry - (stop - entry) * 2
         position_usdt = calculate_position_usdt(entry=entry, stop=stop, max_risk_usdt=self.max_risk_usdt)
         confidence = min(
             100.0,
@@ -59,4 +60,7 @@ class LiquidationFollowStrategy(Strategy):
             strategy=self.name,
             priority=self.priority,
             confidence=confidence,
+            take_profit=take_profit,
+            invalid_condition=f"invalid if momentum fails and stop {stop:.4f} is touched",
+            risk_level="medium" if self.leverage_suggest <= 5 else "high",
         )

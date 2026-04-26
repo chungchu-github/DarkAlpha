@@ -18,8 +18,12 @@ from types import FrameType
 import structlog
 
 from execution.evaluator import PositionEvaluator
+from execution.live_order_sync import LiveOrderStatusSync
+from execution.live_reconciliation import LiveReconciler
+from execution.signal_outcome_evaluator import SignalOutcomeEvaluator
 from reporting.daily import write_snapshot
 from safety.kill_switch import get_kill_switch
+from strategy.config import main_config
 
 log = structlog.get_logger(__name__)
 
@@ -30,14 +34,21 @@ class Supervisor:
     def __init__(
         self,
         evaluator: PositionEvaluator | None = None,
+        outcome_evaluator: SignalOutcomeEvaluator | None = None,
+        live_reconciler: LiveReconciler | None = None,
+        live_order_sync: LiveOrderStatusSync | None = None,
         eval_interval_sec: int = _DEFAULT_INTERVAL_SEC,
         db_path: Path | None = None,
     ) -> None:
         self._eval = evaluator or PositionEvaluator(db_path=db_path)
+        self._outcomes = outcome_evaluator or SignalOutcomeEvaluator(db_path=db_path)
+        self._live_reconciler = live_reconciler or LiveReconciler(db_path=db_path)
+        self._live_order_sync = live_order_sync or LiveOrderStatusSync(db_path=db_path)
         self._interval = eval_interval_sec
         self._db_path = db_path
         self._stop = False
         self._last_snapshot_date: date | None = None
+        self._live_reconciled = False
 
     # ------------------------------------------------------------------
     # Public
@@ -71,14 +82,51 @@ class Supervisor:
             log.warning("supervisor.halted_by_kill_switch")
             return
 
+        if not self._maybe_reconcile_live_startup():
+            return
         self._maybe_write_daily_snapshot()
         try:
+            if self._mode() == "live":
+                sync_results = self._live_order_sync.sync_all()
+                outcome_results = self._outcomes.tick()
+                if sync_results:
+                    log.info("supervisor.live_order_sync", count=len(sync_results))
+                observed = [r for r in outcome_results if r.status == "observed"]
+                if observed:
+                    log.info("supervisor.signal_outcomes", observed_count=len(observed))
+                return
+
             results = self._eval.tick()
+            outcome_results = self._outcomes.tick()
             closed = [r for r in results if r.triggered]
             if closed:
                 log.info("supervisor.tick", closed_count=len(closed))
+            observed = [r for r in outcome_results if r.status == "observed"]
+            if observed:
+                log.info("supervisor.signal_outcomes", observed_count=len(observed))
         except Exception as exc:  # noqa: BLE001
             log.error("supervisor.tick_failed", error=str(exc))
+
+    def _maybe_reconcile_live_startup(self) -> bool:
+        if self._live_reconciled:
+            return True
+        if self._mode() != "live":
+            self._live_reconciled = True
+            return True
+        result = self._live_reconciler.run_for_local_symbols()
+        self._live_reconciled = True
+        if result.status != "ok":
+            log.error(
+                "supervisor.live_reconciliation_mismatch",
+                run_id=result.run_id,
+                mismatches=result.mismatches,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _mode() -> str:
+        return str(main_config().get("mode", "shadow")).lower()
 
     def _maybe_write_daily_snapshot(self) -> None:
         today = datetime.now(tz=UTC).date()

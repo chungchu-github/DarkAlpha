@@ -82,5 +82,9 @@ def proposal_card_to_setup_event(payload: ProposalCardPayload) -> SetupEvent:
             "ttl_minutes": payload.ttl_minutes,
             "priority": payload.priority,
             "oi_status": payload.oi_status,
+            "data_health": payload.data_health,
+            "take_profit_price": payload.take_profit,
+            "invalid_condition": payload.invalid_condition,
+            "risk_level": payload.risk_level,
         },
     )

@@ -18,6 +18,10 @@ def test_format_signal_message_test_payload_contains_required_fields() -> None:
         "max_risk_usdt": 10,
         "ttl_minutes": 5,
         "confidence": 100,
+        "take_profit": 68412.31,
+        "invalid_condition": "invalid if stop is touched",
+        "risk_level": "medium",
+        "data_health": {"status": "fresh", "reason": "ok"},
         "rationale": "TEST DRYRUN emit for pipeline verification",
         "strategy": "test_emit_dryrun",
         "priority": 10000,
@@ -30,7 +34,10 @@ def test_format_signal_message_test_payload_contains_required_fields() -> None:
     assert "BTCUSDT" in text
     assert "68,139.75" in text
     assert "68,003.47" in text
+    assert "68,412.31" in text
     assert "50x" in text
+    assert "medium" in text
+    assert "fresh / ok" in text
     assert "#TEST #DRYRUN" in text
 
 

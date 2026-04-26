@@ -151,8 +151,9 @@ pytest -q
 - Vol breakout
   - `RETURN_THRESHOLD=0.012`
   - `ATR_SPIKE_MULTIPLIER=2.0`
-  - `LEVERAGE_SUGGEST=50`
-  - `TTL_MINUTES=15`
+- `LEVERAGE_SUGGEST=50`
+- `MAX_LEVERAGE_DISPLAY=5`（訊號層展示槓桿硬上限；即使策略內部建議更高也會被截斷）
+- `TTL_MINUTES=15`
 - Funding / OI
   - `FUNDING_EXTREME=0.0005`
   - `OI_ZSCORE=2.0`

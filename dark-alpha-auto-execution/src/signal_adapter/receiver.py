@@ -31,6 +31,7 @@ from safety.kill_switch import get_kill_switch
 from signal_adapter.schemas import ProposalCardPayload
 from signal_adapter.translator import proposal_card_to_setup_event
 from storage.db import get_db
+from storage.signal_journal import record_signal
 from strategy.pipeline import run as run_strategy
 from strategy.schemas import ExecutionTicket, Rejection
 
@@ -92,6 +93,7 @@ async def receive_signal(request: Request) -> dict[str, str]:
         db.commit()
 
     log_event(SIGNAL_ACCEPTED, source="receiver", decision="accept", event_id=event.event_id)
+    record_signal(event)
 
     # Strategy pipeline — build a ticket and dispatch to the broker (shadow mode)
     try:

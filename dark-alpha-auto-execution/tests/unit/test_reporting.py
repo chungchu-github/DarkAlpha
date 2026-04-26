@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from reporting.daily import write_snapshot
+from reporting.performance import render_markdown, summarize
 from reporting.weekly import generate
 from storage.db import get_db, init_db
 
@@ -39,6 +40,48 @@ def _insert_closed_position(
                          tzinfo=UTC).isoformat(),
                 gross, fees, net,
             ),
+        )
+        conn.commit()
+
+
+def _insert_closed_position_with_ticket(
+    db: Path,
+    *,
+    position_id: str,
+    ticket_id: str,
+    event_id: str,
+    symbol: str,
+    regime: str,
+    net: float,
+) -> None:
+    payload = (
+        f'{{"ticket_id":"{ticket_id}","source_event_id":"{event_id}","symbol":"{symbol}",'
+        f'"direction":"long","regime":"{regime}","ranking_score":8.0,'
+        '"shadow_mode":true,"gate":"gate1","entry_price":100.0,'
+        '"stop_price":99.0,"quantity":1.0,"notional_usd":100.0,'
+        '"leverage":1.0,"risk_usd":1.0,"orders":[],"created_at":"2026-04-18T00:00:00+00:00",'
+        f'"metadata":{{"event_metadata":{{"strategy":"{regime}"}}}}}}'
+    )
+    with get_db(db) as conn:
+        conn.execute(
+            """INSERT INTO setup_events
+               (event_id, timestamp, symbol, setup_type, payload, received_at)
+               VALUES (?, '2026-04-18T00:00:00+00:00', ?, 'active', '{}', datetime('now'))""",
+            (event_id, symbol),
+        )
+        conn.execute(
+            """INSERT INTO execution_tickets
+               (ticket_id, source_event_id, status, shadow_mode, payload, created_at)
+               VALUES (?, ?, 'closed', 1, ?, '2026-04-18T00:00:00+00:00')""",
+            (ticket_id, event_id, payload),
+        )
+        conn.execute(
+            """INSERT INTO positions
+               (position_id, ticket_id, symbol, direction, status, quantity, filled_quantity,
+                closed_at, gross_pnl_usd, fees_usd, net_pnl_usd, shadow_mode)
+               VALUES (?, ?, ?, 'long', 'closed', 1.0, 1.0,
+                       '2026-04-18T01:00:00+00:00', ?, 0.5, ?, 1)""",
+            (position_id, ticket_id, symbol, net + 0.5, net),
         )
         conn.commit()
 
@@ -106,3 +149,36 @@ def test_weekly_report_with_data(tmp_path: Path, ready_db: Path,
     assert "## Summary" in content
     assert "Daily breakdown" in content
     assert "2026-04-13" in content
+
+
+def test_performance_report_groups_by_symbol_strategy_regime(ready_db: Path) -> None:
+    _insert_closed_position_with_ticket(
+        ready_db,
+        position_id="p1",
+        ticket_id="t1",
+        event_id="e1",
+        symbol="BTCUSDT-PERP",
+        regime="vol_breakout_card",
+        net=10.0,
+    )
+    _insert_closed_position_with_ticket(
+        ready_db,
+        position_id="p2",
+        ticket_id="t2",
+        event_id="e2",
+        symbol="ETHUSDT-PERP",
+        regime="fake_breakout_reversal",
+        net=-5.0,
+    )
+
+    grouped = summarize(db_path=ready_db)
+    assert {bucket.key for bucket in grouped["symbol"]} == {"BTCUSDT-PERP", "ETHUSDT-PERP"}
+    assert {bucket.key for bucket in grouped["strategy"]} == {
+        "vol_breakout_card",
+        "fake_breakout_reversal",
+    }
+
+    report = render_markdown(db_path=ready_db)
+    assert "By Symbol" in report
+    assert "BTCUSDT-PERP" in report
+    assert "vol_breakout_card" in report

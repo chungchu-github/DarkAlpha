@@ -1,6 +1,6 @@
 """Unit tests for execution.evaluator."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -42,6 +42,7 @@ def _build_ticket(direction: str = "long") -> ExecutionTicket:
                          symbol="BTCUSDT-PERP", price=tp, quantity=1.0, reduce_only=True),
         ],
         created_at=datetime.now(tz=UTC).isoformat(),
+        metadata={"event_metadata": {"ttl_minutes": 15}},
     )
 
 
@@ -71,6 +72,20 @@ def _open_position(ready_db: Path, direction: str = "long") -> tuple[str, Execut
                 symbol="BTCUSDT-PERP", price=100.0, quantity=1.0,
                 fee_usd=0.02, reduce_only=False)
     pid = pm.open_position(ticket, fill)
+    return pid, ticket
+
+
+def _pending_position(
+    ready_db: Path,
+    direction: str = "long",
+    created_at: datetime | None = None,
+) -> tuple[str, ExecutionTicket]:
+    pm = PositionManager(db_path=ready_db)
+    ticket = _build_ticket(direction)
+    if created_at is not None:
+        ticket = ticket.model_copy(update={"created_at": created_at.isoformat()})
+    pm.persist_ticket(ticket, status="accepted")
+    pid = pm.create_pending_position(ticket)
     return pid, ticket
 
 
@@ -151,3 +166,111 @@ def test_no_open_positions_is_empty(ready_db: Path) -> None:
         db_path=ready_db,
     )
     assert ev.tick() == []
+
+
+def test_pending_long_entry_fills_when_touched(ready_db: Path) -> None:
+    pid, ticket = _pending_position(ready_db, "long")
+    ev = PositionEvaluator(
+        price_source=FakePriceSource({"BTCUSDT-PERP": 99.9}),
+        broker=PaperBroker(slippage_bps=0),
+        db_path=ready_db,
+    )
+    results = ev.tick()
+    assert results[0].triggered == "entry_fill"
+
+    with get_db(ready_db) as conn:
+        row = conn.execute(
+            "SELECT status, filled_quantity FROM positions WHERE position_id=?",
+            (pid,),
+        ).fetchone()
+        trow = conn.execute(
+            "SELECT status FROM execution_tickets WHERE ticket_id=?",
+            (ticket.ticket_id,),
+        ).fetchone()
+    assert row["status"] == "open"
+    assert row["filled_quantity"] == pytest.approx(1.0)
+    assert trow["status"] == "filled"
+
+
+def test_pending_short_entry_fills_when_touched(ready_db: Path) -> None:
+    _pending_position(ready_db, "short")
+    ev = PositionEvaluator(
+        price_source=FakePriceSource({"BTCUSDT-PERP": 100.1}),
+        broker=PaperBroker(slippage_bps=0),
+        db_path=ready_db,
+    )
+    results = ev.tick()
+    assert results[0].triggered == "entry_fill"
+
+
+def test_pending_entry_waits_when_not_touched(ready_db: Path) -> None:
+    pid, _ = _pending_position(ready_db, "long")
+    ev = PositionEvaluator(
+        price_source=FakePriceSource({"BTCUSDT-PERP": 100.5}),
+        broker=PaperBroker(slippage_bps=0),
+        db_path=ready_db,
+    )
+    results = ev.tick()
+    assert results[0].triggered is None
+
+    with get_db(ready_db) as conn:
+        row = conn.execute(
+            "SELECT status FROM positions WHERE position_id=?",
+            (pid,),
+        ).fetchone()
+    assert row["status"] == "pending"
+
+
+def test_pending_entry_expires_after_ttl(ready_db: Path) -> None:
+    pid, ticket = _pending_position(
+        ready_db,
+        "long",
+        created_at=datetime.now(tz=UTC) - timedelta(minutes=20),
+    )
+    ev = PositionEvaluator(
+        price_source=FakePriceSource({"BTCUSDT-PERP": 99.0}),
+        broker=PaperBroker(slippage_bps=0),
+        db_path=ready_db,
+    )
+    results = ev.tick()
+    assert results[0].triggered == "entry_expired"
+
+    with get_db(ready_db) as conn:
+        row = conn.execute(
+            "SELECT status FROM positions WHERE position_id=?",
+            (pid,),
+        ).fetchone()
+        trow = conn.execute(
+            "SELECT status FROM execution_tickets WHERE ticket_id=?",
+            (ticket.ticket_id,),
+        ).fetchone()
+    assert row["status"] == "cancelled"
+    assert trow["status"] == "expired"
+
+
+def test_evaluator_ignores_live_positions(ready_db: Path) -> None:
+    ticket = _build_ticket("long").model_copy(
+        update={"ticket_id": "live-t", "shadow_mode": False, "gate": "gate2"}
+    )
+    PositionManager(db_path=ready_db).persist_ticket(ticket, status="filled")
+    with get_db(ready_db) as conn:
+        conn.execute(
+            """INSERT INTO positions
+               (position_id, ticket_id, symbol, direction, status, entry_price,
+                quantity, filled_quantity, stop_price, take_profit_price,
+                opened_at, fees_usd, shadow_mode)
+               VALUES ('live-pos','live-t','BTCUSDT-PERP','long','open',100,
+                       1,1,99,102,datetime('now'),0,0)"""
+        )
+        conn.commit()
+
+    ev = PositionEvaluator(
+        price_source=FakePriceSource({"BTCUSDT-PERP": 98.0}),
+        broker=PaperBroker(slippage_bps=0),
+        db_path=ready_db,
+    )
+
+    assert ev.tick() == []
+    with get_db(ready_db) as conn:
+        row = conn.execute("SELECT status FROM positions WHERE position_id='live-pos'").fetchone()
+    assert row["status"] == "open"

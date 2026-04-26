@@ -70,6 +70,7 @@ class FakeBreakoutReversalStrategy(Strategy):
             sweep_pct_val = 1 - (latest.low / prev_20m_low)
             wick_ratio = lower_wick / body
             reclaim_level = prev_20m_low
+        take_profit = entry - (stop - entry) * 2 if side == "SHORT" else entry + (entry - stop) * 2
 
         position_usdt = calculate_position_usdt(entry=entry, stop=stop, max_risk_usdt=self.max_risk_usdt)
         confidence = min(100.0, 50.0 + (wick_ratio * 10.0) + (sweep_pct_val * 10000.0))
@@ -91,4 +92,7 @@ class FakeBreakoutReversalStrategy(Strategy):
             strategy=self.name,
             priority=self.priority,
             confidence=confidence,
+            take_profit=take_profit,
+            invalid_condition=f"invalid if reclaim level {reclaim_level:.4f} fails or stop {stop:.4f} is touched",
+            risk_level="medium" if self.leverage_suggest <= 5 else "high",
         )

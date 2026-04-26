@@ -11,7 +11,8 @@ Checks global/account state — the things the per-signal logic cannot see.
   6. Equity below min_equity_to_trade?          → reject
 """
 
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import structlog
@@ -29,6 +30,21 @@ log = structlog.get_logger(__name__)
 _HALT_ACTIONS = {"halt_24h", "halt_12h", "halt_until_manual_reset"}
 
 
+class RiskGateDataError(RuntimeError):
+    """Raised internally when a risk-state query fails.
+
+    Converted to a fail-closed Rejection by ``RiskGate.check``. The reason
+    string is one of the audit-defined names (``open_positions_unavailable``,
+    ``ticket_count_unavailable``, ``pnl_state_unavailable``,
+    ``risk_state_unavailable``).
+    """
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.detail = detail
+
+
 class RiskGate:
     def __init__(
         self,
@@ -41,9 +57,33 @@ class RiskGate:
         self._db_path = db_path
 
     def check(self, event: SetupEvent, equity_usd: float) -> Rejection | None:
+        """Run all gate checks. Always returns a Rejection or None — never raises.
+
+        Any DB / state-source failure is converted into a fail-closed Rejection
+        with one of the audit reason codes so the receiver never sees a stray
+        exception from this layer.
+        """
+        try:
+            return self._check(event, equity_usd)
+        except RiskGateDataError as exc:
+            return self._reject(event, exc.reason, exc.detail)
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "risk_gate.unexpected_failure",
+                event_id=event.event_id,
+                error=str(exc),
+            )
+            return self._reject(event, "risk_state_unavailable", str(exc))
+
+    def _check(self, event: SetupEvent, equity_usd: float) -> Rejection | None:
         cfg = risk_gate_config()
         max_positions = int(cfg.get("max_concurrent_positions", 3))
         max_tickets_per_day = int(cfg.get("max_tickets_per_day", 5))
+        max_symbol_tickets = int(cfg.get("max_tickets_per_symbol_per_day", 0))
+        max_strategy_tickets = int(cfg.get("max_tickets_per_strategy_per_day", 0))
+        max_consecutive_losses = int(cfg.get("max_consecutive_losses", 0))
+        max_weekly_loss_pct = float(cfg.get("max_weekly_loss_pct", 0.0))
+        max_daily_loss_usd = float(cfg.get("max_daily_loss_usd", 0.0))
         min_equity = float(cfg.get("min_equity_to_trade", 1000.0))
         allow_dup = bool(cfg.get("allow_duplicate_symbol", False))
 
@@ -63,6 +103,31 @@ class RiskGate:
                 f"{equity_usd:.2f} < {min_equity:.2f}",
             )
 
+        if max_consecutive_losses > 0 and self._consecutive_losses() >= max_consecutive_losses:
+            return self._reject(
+                event,
+                "max_consecutive_losses",
+                f">= {max_consecutive_losses}",
+            )
+
+        weekly_loss = self._weekly_realized_loss_usd()
+        weekly_loss_cap = equity_usd * max_weekly_loss_pct
+        if max_weekly_loss_pct > 0 and weekly_loss >= weekly_loss_cap:
+            return self._reject(
+                event,
+                "weekly_loss_cap",
+                f"{weekly_loss:.2f} >= {weekly_loss_cap:.2f}",
+            )
+
+        if max_daily_loss_usd > 0:
+            daily_loss = self._daily_realized_loss_usd()
+            if daily_loss >= max_daily_loss_usd:
+                return self._reject(
+                    event,
+                    "daily_loss_cap",
+                    f"{daily_loss:.2f} >= {max_daily_loss_usd:.2f}",
+                )
+
         open_count, open_symbols = self._open_positions()
         if open_count >= max_positions:
             return self._reject(
@@ -79,6 +144,24 @@ class RiskGate:
                 "daily_ticket_cap",
                 f">= {max_tickets_per_day}",
             )
+        if (
+            max_symbol_tickets > 0
+            and self._tickets_today_for_symbol(event.symbol) >= max_symbol_tickets
+        ):
+            return self._reject(
+                event,
+                "daily_symbol_ticket_cap",
+                f"{event.symbol} >= {max_symbol_tickets}",
+            )
+        if (
+            max_strategy_tickets > 0
+            and self._tickets_today_for_strategy(event.regime) >= max_strategy_tickets
+        ):
+            return self._reject(
+                event,
+                "daily_strategy_ticket_cap",
+                f"{event.regime} >= {max_strategy_tickets}",
+            )
 
         return None
 
@@ -91,22 +174,133 @@ class RiskGate:
             symbols = {row["symbol"] for row in rows}
             return len(symbols), symbols
         except Exception as exc:  # noqa: BLE001
-            log.warning("risk_gate.open_positions_failed", error=str(exc))
-            return 0, set()
+            log.error("risk_gate.open_positions_failed", error=str(exc))
+            raise RiskGateDataError("open_positions_unavailable", str(exc)) from exc
 
     def _tickets_today(self) -> int:
         today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
         try:
             with get_db(self._db_path) as conn:
                 row = conn.execute(
-                    "SELECT COUNT(*) AS n FROM execution_tickets "
-                    "WHERE substr(created_at,1,10)=?",
+                    "SELECT COUNT(*) AS n FROM execution_tickets WHERE substr(created_at,1,10)=?",
                     (today,),
                 ).fetchone()
             return int(row["n"]) if row else 0
         except Exception as exc:  # noqa: BLE001
-            log.warning("risk_gate.tickets_today_failed", error=str(exc))
-            return 0
+            log.error("risk_gate.tickets_today_failed", error=str(exc))
+            raise RiskGateDataError("ticket_count_unavailable", str(exc)) from exc
+
+    def _tickets_today_for_symbol(self, symbol: str) -> int:
+        today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        try:
+            with get_db(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS n
+                      FROM execution_tickets t
+                      JOIN setup_events e ON e.event_id = t.source_event_id
+                     WHERE substr(t.created_at,1,10)=?
+                       AND e.symbol=?
+                    """,
+                    (today, symbol),
+                ).fetchone()
+            return int(row["n"]) if row else 0
+        except Exception as exc:  # noqa: BLE001
+            log.error("risk_gate.symbol_tickets_today_failed", error=str(exc))
+            raise RiskGateDataError("ticket_count_unavailable", str(exc)) from exc
+
+    def _tickets_today_for_strategy(self, strategy: str) -> int:
+        today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        try:
+            with get_db(self._db_path) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT e.payload
+                      FROM execution_tickets t
+                      JOIN setup_events e ON e.event_id = t.source_event_id
+                     WHERE substr(t.created_at,1,10)=?
+                    """,
+                    (today,),
+                ).fetchall()
+            count = 0
+            for row in rows:
+                payload = str(row["payload"] or "")
+                try:
+                    parsed = json.loads(payload)
+                except json.JSONDecodeError:
+                    parsed = {}
+                if parsed.get("regime") == strategy:
+                    count += 1
+            return count
+        except Exception as exc:  # noqa: BLE001
+            log.error("risk_gate.strategy_tickets_today_failed", error=str(exc))
+            raise RiskGateDataError("ticket_count_unavailable", str(exc)) from exc
+
+    def _consecutive_losses(self) -> int:
+        try:
+            with get_db(self._db_path) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT net_pnl_usd
+                      FROM positions
+                     WHERE status='closed'
+                       AND net_pnl_usd IS NOT NULL
+                     ORDER BY closed_at DESC
+                    """
+                ).fetchall()
+            losses = 0
+            for row in rows:
+                pnl = float(row["net_pnl_usd"] or 0.0)
+                if pnl < 0:
+                    losses += 1
+                    continue
+                break
+            return losses
+        except Exception as exc:  # noqa: BLE001
+            log.error("risk_gate.consecutive_losses_failed", error=str(exc))
+            raise RiskGateDataError("pnl_state_unavailable", str(exc)) from exc
+
+    def _daily_realized_loss_usd(self) -> float:
+        today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        try:
+            with get_db(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(
+                              SUM(CASE WHEN net_pnl_usd < 0 THEN -net_pnl_usd ELSE 0 END),
+                              0
+                           ) AS loss
+                      FROM positions
+                     WHERE status='closed'
+                       AND closed_at IS NOT NULL
+                       AND substr(closed_at,1,10) = ?
+                    """,
+                    (today,),
+                ).fetchone()
+            return float(row["loss"] or 0.0) if row else 0.0
+        except Exception as exc:  # noqa: BLE001
+            log.error("risk_gate.daily_loss_failed", error=str(exc))
+            raise RiskGateDataError("pnl_state_unavailable", str(exc)) from exc
+
+    def _weekly_realized_loss_usd(self) -> float:
+        now = datetime.now(tz=UTC)
+        week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+        try:
+            with get_db(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(CASE WHEN net_pnl_usd < 0 THEN -net_pnl_usd ELSE 0 END), 0) AS loss
+                      FROM positions
+                     WHERE status='closed'
+                       AND closed_at IS NOT NULL
+                       AND substr(closed_at,1,10) >= ?
+                    """,
+                    (week_start,),
+                ).fetchone()
+            return float(row["loss"] or 0.0) if row else 0.0
+        except Exception as exc:  # noqa: BLE001
+            log.error("risk_gate.weekly_loss_failed", error=str(exc))
+            raise RiskGateDataError("pnl_state_unavailable", str(exc)) from exc
 
     def _reject(self, event: SetupEvent, reason: str, detail: str) -> Rejection:
         log.warning(

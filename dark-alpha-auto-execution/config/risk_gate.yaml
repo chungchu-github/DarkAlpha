@@ -1,4 +1,17 @@
 max_concurrent_positions: 3    # max open positions at any time
 max_tickets_per_day: 5         # daily ticket cap (prevents runaway signal days)
+max_tickets_per_symbol_per_day: 2
+max_tickets_per_strategy_per_day: 3
 min_equity_to_trade: 1000.0    # pause if equity falls below this (USD)
+max_consecutive_losses: 3
+max_weekly_loss_pct: 0.03
+max_daily_loss_usd: 0.0        # 0 disables; >0 = realized loss cap for today (USD)
 allow_duplicate_symbol: false  # Gate 1-2: no stacking positions on same symbol
+
+# Task 7 — account-level guards (live mode). All default to 0 (disabled);
+# operators must opt in. Values apply to the broker's signed account_info()
+# response and position_risk() rows.
+min_free_balance_usd: 0.0          # required availableBalance floor (USD)
+min_free_balance_ratio: 0.0        # required free balance as a fraction of ticket margin
+max_margin_ratio: 0.0              # totalMaintMargin / totalMarginBalance cap
+min_liquidation_buffer_pct: 0.0    # |markPrice - liquidationPrice| / markPrice floor

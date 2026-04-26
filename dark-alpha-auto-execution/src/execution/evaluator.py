@@ -1,17 +1,17 @@
-"""Position evaluator — checks open positions against current mark price.
+"""Position evaluator — checks pending/open shadow positions against market price.
 
-In shadow mode, entries fill immediately in the paper broker. Exits don't —
-we need to poll the market and simulate a fill when the stop or take-profit
-price is crossed.
+Pending entries fill only when price touches the entry before TTL expiry.
+Open positions close when stop or take-profit is crossed.
 
 One tick does:
-  1. load all open positions from the DB
-  2. fetch latest price for each distinct symbol
-  3. for each position, check stop / TP crossing rules
-  4. if triggered, simulate the exit fill via PaperBroker + close via PositionManager
+  1. load all pending/open positions from the DB
+  2. expire overdue pending entries
+  3. fetch latest price for each active position
+  4. fill entries or close exits when price crosses a level
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import structlog
@@ -30,7 +30,7 @@ log = structlog.get_logger(__name__)
 class EvalResult:
     position_id: str
     symbol: str
-    triggered: str | None  # 'stop_loss' | 'take_profit' | None
+    triggered: str | None  # 'entry_fill' | 'entry_expired' | 'stop_loss' | 'take_profit' | None
     mark_price: float | None
 
 
@@ -40,6 +40,8 @@ class _OpenPosition:
     ticket_id: str
     symbol: str
     direction: str
+    status: str
+    entry_price: float | None
     stop_price: float | None
     take_profit_price: float | None
 
@@ -61,12 +63,38 @@ class PositionEvaluator:
         """One evaluation pass. Returns what happened for each open position."""
         results: list[EvalResult] = []
         for pos in self._load_open_positions():
+            if pos.status == "pending":
+                ticket = self._load_ticket(pos.ticket_id)
+                if ticket is None:
+                    log.warning("evaluator.ticket_missing", ticket_id=pos.ticket_id)
+                    continue
+                if self._is_expired(ticket):
+                    self._manager.expire_pending_position(pos.position_id, pos.ticket_id)
+                    results.append(EvalResult(pos.position_id, pos.symbol, "entry_expired", None))
+                    continue
+                mark = self._prices.last_price(pos.symbol)
+                if mark is None:
+                    results.append(EvalResult(pos.position_id, pos.symbol, None, None))
+                    continue
+                if self._entry_touched(ticket, mark):
+                    fill = self._broker.simulate_entry(ticket)
+                    self._manager.fill_pending_position(pos.position_id, ticket, fill)
+                    log.info(
+                        "evaluator.entry_filled",
+                        position_id=pos.position_id,
+                        symbol=pos.symbol,
+                        mark=mark,
+                    )
+                    results.append(EvalResult(pos.position_id, pos.symbol, "entry_fill", mark))
+                    continue
+                results.append(EvalResult(pos.position_id, pos.symbol, None, mark))
+                continue
+
             mark = self._prices.last_price(pos.symbol)
             if mark is None:
                 results.append(EvalResult(pos.position_id, pos.symbol, None, None))
                 continue
-
-            reason = self._check_trigger(pos, mark)
+            reason = self._check_exit_trigger(pos, mark)
             if reason is None:
                 results.append(EvalResult(pos.position_id, pos.symbol, None, mark))
                 continue
@@ -88,7 +116,7 @@ class PositionEvaluator:
         return results
 
     @staticmethod
-    def _check_trigger(pos: _OpenPosition, mark: float) -> str | None:
+    def _check_exit_trigger(pos: _OpenPosition, mark: float) -> str | None:
         stop = pos.stop_price
         tp = pos.take_profit_price
         if pos.direction == "long":
@@ -108,9 +136,10 @@ class PositionEvaluator:
             rows = conn.execute(
                 """
                 SELECT position_id, ticket_id, symbol, direction,
-                       stop_price, take_profit_price
+                       status, entry_price, stop_price, take_profit_price
                   FROM positions
-                 WHERE status='open'
+                 WHERE status IN ('pending','open')
+                   AND shadow_mode=1
                 """
             ).fetchall()
         return [
@@ -119,6 +148,8 @@ class PositionEvaluator:
                 ticket_id=r["ticket_id"],
                 symbol=r["symbol"],
                 direction=r["direction"],
+                status=r["status"],
+                entry_price=r["entry_price"],
                 stop_price=r["stop_price"],
                 take_profit_price=r["take_profit_price"],
             )
@@ -134,3 +165,31 @@ class PositionEvaluator:
         if row is None:
             return None
         return ExecutionTicket.model_validate_json(row["payload"])
+
+    @staticmethod
+    def _entry_touched(ticket: ExecutionTicket, mark: float) -> bool:
+        if ticket.direction == "long":
+            return mark <= ticket.entry_price
+        return mark >= ticket.entry_price
+
+    @staticmethod
+    def _is_expired(ticket: ExecutionTicket, now: datetime | None = None) -> bool:
+        now = now or datetime.now(tz=UTC)
+        created = datetime.fromisoformat(ticket.created_at.replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        ttl_minutes = _ticket_ttl_minutes(ticket)
+        return created.astimezone(UTC) + timedelta(minutes=ttl_minutes) <= now
+
+
+def _ticket_ttl_minutes(ticket: ExecutionTicket) -> int:
+    metadata = ticket.metadata.get("event_metadata")
+    if isinstance(metadata, dict):
+        raw = metadata.get("ttl_minutes")
+    else:
+        raw = ticket.metadata.get("ttl_minutes")
+    try:
+        ttl = int(float(raw)) if raw is not None else 15
+    except (TypeError, ValueError):
+        ttl = 15
+    return max(ttl, 1)

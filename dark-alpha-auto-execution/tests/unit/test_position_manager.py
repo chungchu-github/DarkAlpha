@@ -81,6 +81,51 @@ def test_persist_ticket_and_open_position(ready_db: Path) -> None:
     assert trow["status"] == "filled"
 
 
+def test_create_pending_and_fill_position(ready_db: Path) -> None:
+    pm = PositionManager(db_path=ready_db)
+    ticket = _ticket()
+    pm.persist_ticket(ticket, status="accepted")
+    pos_id = pm.create_pending_position(ticket)
+    fill = PaperBroker(slippage_bps=0).simulate_entry(ticket)
+    pm.fill_pending_position(pos_id, ticket, fill)
+
+    with get_db(ready_db) as conn:
+        row = conn.execute(
+            "SELECT status, filled_quantity FROM positions WHERE position_id=?",
+            (pos_id,),
+        ).fetchone()
+        trow = conn.execute(
+            "SELECT status FROM execution_tickets WHERE ticket_id=?",
+            (ticket.ticket_id,),
+        ).fetchone()
+
+    assert row["status"] == "open"
+    assert row["filled_quantity"] == pytest.approx(1.0)
+    assert trow["status"] == "filled"
+
+
+def test_expire_pending_position(ready_db: Path) -> None:
+    pm = PositionManager(db_path=ready_db)
+    ticket = _ticket()
+    pm.persist_ticket(ticket, status="accepted")
+    pos_id = pm.create_pending_position(ticket)
+    pm.expire_pending_position(pos_id, ticket.ticket_id)
+
+    with get_db(ready_db) as conn:
+        row = conn.execute(
+            "SELECT status, exit_reason FROM positions WHERE position_id=?",
+            (pos_id,),
+        ).fetchone()
+        trow = conn.execute(
+            "SELECT status FROM execution_tickets WHERE ticket_id=?",
+            (ticket.ticket_id,),
+        ).fetchone()
+
+    assert row["status"] == "cancelled"
+    assert row["exit_reason"] == "ttl_expired"
+    assert trow["status"] == "expired"
+
+
 def test_close_position_profit(ready_db: Path) -> None:
     pm = PositionManager(db_path=ready_db)
     ticket = _ticket()

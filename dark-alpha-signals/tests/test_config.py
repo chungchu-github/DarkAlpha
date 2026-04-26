@@ -16,3 +16,11 @@ def test_load_settings_parses_test_emit_mode(monkeypatch) -> None:
     assert settings.test_emit_symbols == ["ETHUSDT", "SOLUSDT"]
     assert settings.test_emit_interval_sec == 15
     assert settings.test_emit_tf == "5m"
+
+
+def test_load_settings_parses_max_leverage_display(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_LEVERAGE_DISPLAY", "4")
+
+    settings = load_settings()
+
+    assert settings.max_leverage_display == 4

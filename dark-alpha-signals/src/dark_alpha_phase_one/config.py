@@ -19,6 +19,7 @@ class Settings:
     atr_spike_multiplier: float
     max_risk_usdt: float
     leverage_suggest: int
+    max_leverage_display: int
     ttl_minutes: int
     kline_limit: int
     max_daily_loss_usdt: float
@@ -85,6 +86,7 @@ def load_settings() -> Settings:
         atr_spike_multiplier=float(os.getenv("ATR_SPIKE_MULTIPLIER", "2.0")),
         max_risk_usdt=float(os.getenv("MAX_RISK_USDT", "10")),
         leverage_suggest=int(os.getenv("LEVERAGE_SUGGEST", "50")),
+        max_leverage_display=int(os.getenv("MAX_LEVERAGE_DISPLAY", "5")),
         ttl_minutes=int(os.getenv("TTL_MINUTES", "15")),
         kline_limit=int(os.getenv("KLINE_LIMIT", "500")),
         max_daily_loss_usdt=float(os.getenv("MAX_DAILY_LOSS_USDT", "30")),

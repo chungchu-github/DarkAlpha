@@ -12,6 +12,19 @@
   "created_at": "2026-04-18T02:00:00+00:00",
   "priority": 40,
   "confidence": 78.5,
+  "take_profit": 97100.0,
+  "invalid_condition": "invalid if stop is touched before follow-through",
+  "risk_level": "medium",
   "oi_status": "fresh",
+  "data_health": {
+    "status": "fresh",
+    "reason": "ok",
+    "price_raw_age_ms": 250,
+    "kline_recv_raw_age_ms": 900,
+    "kline_close_raw_age_ms": 60000,
+    "funding_raw_age_ms": 10000,
+    "oi_raw_age_ms": 5000,
+    "oi_status": "fresh"
+  },
   "trace_id": "abc123def456"
 }

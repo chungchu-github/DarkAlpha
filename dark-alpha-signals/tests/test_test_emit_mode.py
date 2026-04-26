@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from dark_alpha_phase_one.calculations import Candle
 from dark_alpha_phase_one.data.datastore import FundingRatePoint, SymbolSnapshot
-from dark_alpha_phase_one.service import DerivativesGate, SignalService
+from dark_alpha_phase_one.service import MarketHealthGate, SignalService
 
 
 def _snapshot(price: float = 100.0) -> SymbolSnapshot:
@@ -34,6 +34,7 @@ def _service_for_test_emit() -> SignalService:
     service.settings = SimpleNamespace(
         max_risk_usdt=10.0,
         leverage_suggest=20,
+        max_leverage_display=5,
         test_emit_enabled=True,
         test_emit_symbols=["BTCUSDT"],
         test_emit_interval_sec=60,
@@ -44,6 +45,20 @@ def _service_for_test_emit() -> SignalService:
     return service
 
 
+def _health(oi_status: str = "fresh") -> MarketHealthGate:
+    return MarketHealthGate(
+        allow=True,
+        status="fresh",
+        reason="ok",
+        price_raw_age_ms=1,
+        kline_recv_raw_age_ms=1,
+        kline_close_raw_age_ms=1,
+        funding_raw_age_ms=1,
+        oi_raw_age_ms=1,
+        oi_status=oi_status,
+    )
+
+
 def test_maybe_test_emit_emits_card_for_enabled_symbol(monkeypatch) -> None:
     service = _service_for_test_emit()
     monkeypatch.setattr("dark_alpha_phase_one.service.time.time", lambda: 1_000.0)
@@ -51,13 +66,15 @@ def test_maybe_test_emit_emits_card_for_enabled_symbol(monkeypatch) -> None:
     card, trace_id = service._maybe_test_emit(
         "BTCUSDT",
         _snapshot(),
-        DerivativesGate(allow=True, oi_status="stale", funding_raw_age_ms=1, oi_raw_age_ms=200_000, reason="ok"),
+        _health(oi_status="fresh"),
     )
 
     assert card is not None
     assert trace_id is not None
     assert card.strategy == "test_emit_dryrun"
-    assert card.oi_status == "stale"
+    assert card.leverage_suggest == 5
+    assert card.oi_status == "fresh"
+    assert card.data_health["status"] == "fresh"
 
 
 def test_maybe_test_emit_respects_interval_per_symbol(monkeypatch) -> None:
@@ -67,12 +84,12 @@ def test_maybe_test_emit_respects_interval_per_symbol(monkeypatch) -> None:
     first_card, first_trace_id = service._maybe_test_emit(
         "BTCUSDT",
         _snapshot(),
-        DerivativesGate(allow=True, oi_status="fresh", funding_raw_age_ms=1, oi_raw_age_ms=1, reason="ok"),
+        _health(),
     )
     blocked_card, blocked_trace_id = service._maybe_test_emit(
         "BTCUSDT",
         _snapshot(),
-        DerivativesGate(allow=True, oi_status="fresh", funding_raw_age_ms=1, oi_raw_age_ms=1, reason="ok"),
+        _health(),
     )
 
     assert first_card is not None

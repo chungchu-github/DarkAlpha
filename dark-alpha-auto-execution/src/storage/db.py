@@ -34,11 +34,12 @@ def init_db(path: Path | None = None) -> None:
 def get_db(path: Path | None = None) -> Generator[sqlite3.Connection, None, None]:
     """Context manager yielding an open SQLite connection.
 
-    Automatically initializes the schema on first use if the DB file is new.
+    Always applies idempotent migrations before opening the connection. This is
+    important for long-lived local DB files created before newer Gate migrations
+    existed.
     """
     db_file = path or _db_path()
-    if not db_file.exists():
-        init_db(db_file)
+    init_db(db_file)
 
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA journal_mode=WAL")
