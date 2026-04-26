@@ -36,9 +36,12 @@ def _insert_closed_position(
                        ?, ?, ?, ?, 1)""",
             (
                 f"p-{closed_on.isoformat()}-{net}",
-                datetime(closed_on.year, closed_on.month, closed_on.day, 12, 0,
-                         tzinfo=UTC).isoformat(),
-                gross, fees, net,
+                datetime(
+                    closed_on.year, closed_on.month, closed_on.day, 12, 0, tzinfo=UTC
+                ).isoformat(),
+                gross,
+                fees,
+                net,
             ),
         )
         conn.commit()
@@ -119,10 +122,12 @@ def test_daily_snapshot_chains_equity(ready_db: Path) -> None:
     assert s2.ending_equity == pytest.approx(s1.ending_equity + 49.5)
 
 
-def test_weekly_report_empty_window(tmp_path: Path, ready_db: Path,
-                                    monkeypatch: pytest.MonkeyPatch) -> None:
+def test_weekly_report_empty_window(
+    tmp_path: Path, ready_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
     import reporting.weekly as w
+
     monkeypatch.setattr(w, "_REPORTS_DIR", tmp_path / "reports")
 
     path = generate(date(2026, 4, 19), db_path=ready_db)
@@ -132,16 +137,19 @@ def test_weekly_report_empty_window(tmp_path: Path, ready_db: Path,
     assert "No daily snapshots" in content
 
 
-def test_weekly_report_with_data(tmp_path: Path, ready_db: Path,
-                                 monkeypatch: pytest.MonkeyPatch) -> None:
+def test_weekly_report_with_data(
+    tmp_path: Path, ready_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("REPORTS_DIR", str(tmp_path / "reports"))
     import reporting.weekly as w
+
     monkeypatch.setattr(w, "_REPORTS_DIR", tmp_path / "reports")
 
     for i in range(3):
         d = date(2026, 4, 13) + timedelta(days=i)
-        _insert_closed_position(ready_db, d, gross=10.0 * (i + 1),
-                                fees=0.5, net=10.0 * (i + 1) - 0.5)
+        _insert_closed_position(
+            ready_db, d, gross=10.0 * (i + 1), fees=0.5, net=10.0 * (i + 1) - 0.5
+        )
         write_snapshot(d, db_path=ready_db)
 
     path = generate(date(2026, 4, 19), db_path=ready_db)

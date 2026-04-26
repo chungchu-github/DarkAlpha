@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import structlog
 from ulid import ULID
@@ -117,14 +118,13 @@ class LiveReconciler:
             for row in exchange_orders
         }
         exchange_algo_orders = self._client.open_algo_orders(symbol)
-        exchange_ids.update(
-            str(row.get("clientAlgoId") or "")
-            for row in exchange_algo_orders
-        )
+        exchange_ids.update(str(row.get("clientAlgoId") or "") for row in exchange_algo_orders)
         exchange_ids.discard("")
 
         mismatches: list[str] = []
-        unexpected = sorted(oid for oid in exchange_ids if oid.startswith("DA") and oid not in local_ids)
+        unexpected = sorted(
+            oid for oid in exchange_ids if oid.startswith("DA") and oid not in local_ids
+        )
         if unexpected:
             mismatches.append(f"unexpected_exchange_orders={','.join(unexpected)}")
 
@@ -139,7 +139,9 @@ class LiveReconciler:
         elif abs(position_amt) == 0 and abs(local_position_amt) > 0:
             mismatches.append(f"local_position_missing_on_exchange={local_position_amt}")
         elif abs(position_amt - local_position_amt) > 1e-12:
-            mismatches.append(f"position_amount_mismatch=exchange:{position_amt},local:{local_position_amt}")
+            mismatches.append(
+                f"position_amount_mismatch=exchange:{position_amt},local:{local_position_amt}"
+            )
 
         status = "mismatch" if mismatches else "ok"
         return SymbolReconciliation(symbol=symbol, status=status, mismatches=mismatches)
@@ -212,8 +214,27 @@ def _result_details(result: ReconciliationResult) -> dict[str, object]:
     }
 
 
-def _float(value: object) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
+class LiveReconciliationDataError(RuntimeError):
+    """Raised when an exchange row cannot be parsed.
+
+    Reconciliation cannot silently treat malformed positionAmt / quantity as 0
+    because that would *hide* a real exchange position from mismatch detection
+    and produce a false 'ok' status. The outer ``run()`` catches this, records
+    the run as 'failed', and activates the kill switch.
+    """
+
+
+def _float(value: Any) -> float:
+    """Strict numeric coerce for reconciliation.
+
+    - ``None`` / empty string → ``0.0`` (Binance returns those when a field is
+      legitimately absent for a flat position).
+    - Anything that fails ``float()`` → ``LiveReconciliationDataError`` so the
+      caller fails closed instead of silently flattening to 0.
+    """
+    if value is None or value == "":
         return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise LiveReconciliationDataError(f"unparseable_numeric_value value={value!r}") from exc

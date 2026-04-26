@@ -133,7 +133,9 @@ def run_gate25_fill_lifecycle(db_path: Path | None = None) -> GateCheckReport:
 
         ticket = _ticket(ticket_id="GATE25SL", source_event_id="gate25-sl")
         ids = _seed_live_ticket(db, ticket)
-        client.orders[ids["entry"]] = _regular_payload(ids["entry"], "PARTIALLY_FILLED", "0.005", "0.5")
+        client.orders[ids["entry"]] = _regular_payload(
+            ids["entry"], "PARTIALLY_FILLED", "0.005", "0.5"
+        )
         client.algo_orders[ids["stop"]] = _algo_payload(ids["stop"], "NEW", "0", "0")
         client.algo_orders[ids["take_profit"]] = _algo_payload(ids["take_profit"], "NEW", "0", "0")
 
@@ -157,10 +159,14 @@ def run_gate25_fill_lifecycle(db_path: Path | None = None) -> GateCheckReport:
         tp_ids = _seed_live_ticket(db, tp_ticket)
         client.orders[tp_ids["entry"]] = _regular_payload(tp_ids["entry"], "FILLED", "0.01", "1.0")
         client.algo_orders[tp_ids["stop"]] = _algo_payload(tp_ids["stop"], "NEW", "0", "0")
-        client.algo_orders[tp_ids["take_profit"]] = _algo_payload(tp_ids["take_profit"], "NEW", "0", "0")
+        client.algo_orders[tp_ids["take_profit"]] = _algo_payload(
+            tp_ids["take_profit"], "NEW", "0", "0"
+        )
         client.exchange_position_amt = 0.01
         LiveOrderStatusSync(client=client, db_path=db).sync_symbol(tp_ticket.symbol)
-        client.algo_orders[tp_ids["take_profit"]] = _algo_payload(tp_ids["take_profit"], "FILLED", "0.01", "1.02")
+        client.algo_orders[tp_ids["take_profit"]] = _algo_payload(
+            tp_ids["take_profit"], "FILLED", "0.01", "1.02"
+        )
         client.exchange_position_amt = 0.0
         LiveOrderStatusSync(client=client, db_path=db).sync_symbol(tp_ticket.symbol)
         _assert_closed(db, tp_ticket.ticket_id, "take_profit")
@@ -185,7 +191,11 @@ def run_gate25_fill_lifecycle(db_path: Path | None = None) -> GateCheckReport:
             filters=_filters(),
         )
         ack = broker.emergency_close_symbol(ticket.symbol)
-        if ack is None or not client.new_order_calls or client.new_order_calls[-1].get("reduceOnly") != "true":
+        if (
+            ack is None
+            or not client.new_order_calls
+            or client.new_order_calls[-1].get("reduceOnly") != "true"
+        ):
             raise AssertionError("emergency flatten did not submit reduce-only market")
         steps.append(GateCheckStep("emergency flatten submits reduce-only market close", "ok"))
 
@@ -204,7 +214,9 @@ def run_gate3_restart_safety(db_path: Path | None = None) -> GateCheckReport:
             raise AssertionError("missing submitted order status")
         steps.append(GateCheckStep("restart sees existing submitted clientOrderId", "ok"))
 
-        if not any(status in {"submitted", "acknowledged", "filled"} for status in statuses.values()):
+        if not any(
+            status in {"submitted", "acknowledged", "filled"} for status in statuses.values()
+        ):
             raise AssertionError("duplicate guard would not block")
         steps.append(GateCheckStep("duplicate live ticket would be blocked before broker", "ok"))
 
@@ -224,7 +236,9 @@ def run_gate3_restart_safety(db_path: Path | None = None) -> GateCheckReport:
             raise AssertionError("reconciliation mismatch did not activate kill switch")
         steps.append(GateCheckStep("reconcile mismatch activates kill switch", "ok"))
 
-        rejection = RiskGate(kill_switch=ks, db_path=db).check(_event("gate3-kill"), equity_usd=10_000)
+        rejection = RiskGate(kill_switch=ks, db_path=db).check(
+            _event("gate3-kill"), equity_usd=10_000
+        )
         if rejection is None or rejection.reason != "kill_switch_active":
             raise AssertionError("kill switch did not block risk gate")
         steps.append(GateCheckStep("kill switch blocks new trading decisions", "ok"))
@@ -357,7 +371,9 @@ def run_gate6_micro_live_canary_scaffold() -> GateCheckReport:
         leverage=1,
     )
     assert_micro_live_ticket(ticket, cfg, require_credentials=False)
-    broker = BinanceFuturesBroker(client=LifecycleFakeClient(), config=cfg, filters=_filters("ETHUSDT"))
+    broker = BinanceFuturesBroker(
+        client=LifecycleFakeClient(), config=cfg, filters=_filters("ETHUSDT")
+    )
     if not isinstance(broker, BinanceFuturesBroker):
         raise AssertionError("generic futures broker scaffold unavailable")
     return GateCheckReport(
@@ -377,14 +393,20 @@ def run_gate64_user_stream_ingestion(db_path: Path | None = None) -> GateCheckRe
         ticket = _ticket(ticket_id="GATE64STREAM", source_event_id="gate64-stream")
         ids = _seed_live_ticket(db, ticket)
         ks = KillSwitch(sentinel_path=db.with_suffix(".kill"))
-        ingestor = LiveUserStreamIngestor(db_path=db, guard=LiveEventGuard(db_path=db, kill_switch=ks))
+        ingestor = LiveUserStreamIngestor(
+            db_path=db, guard=LiveEventGuard(db_path=db, kill_switch=ks)
+        )
 
-        entry = _order_trade_update(ids["entry"], "BUY", "LIMIT", "FILLED", "0.01", "0.01", "100.0", "1")
+        entry = _order_trade_update(
+            ids["entry"], "BUY", "LIMIT", "FILLED", "0.01", "0.01", "100.0", "1"
+        )
         ingestor.process_event(entry)
         _assert_position(db, ticket.ticket_id, "open", 0.01)
         steps.append(GateCheckStep("ORDER_TRADE_UPDATE entry fill opens local position", "ok"))
 
-        stop = _order_trade_update(ids["stop"], "SELL", "STOP_MARKET", "FILLED", "0.01", "0.01", "99.0", "2")
+        stop = _order_trade_update(
+            ids["stop"], "SELL", "STOP_MARKET", "FILLED", "0.01", "0.01", "99.0", "2"
+        )
         ingestor.process_event(stop)
         _assert_closed(db, ticket.ticket_id, "stop_loss")
         steps.append(GateCheckStep("ORDER_TRADE_UPDATE stop fill closes local position", "ok"))
@@ -419,11 +441,15 @@ def run_gate66_event_driven_risk(db_path: Path | None = None) -> GateCheckReport
             )
             conn.commit()
         ingestor.process_event(
-            _order_trade_update(ids["entry"], "BUY", "LIMIT", "FILLED", "0.01", "0.01", "100.0", "1")
+            _order_trade_update(
+                ids["entry"], "BUY", "LIMIT", "FILLED", "0.01", "0.01", "100.0", "1"
+            )
         )
         if not ks.is_active():
             raise AssertionError("missing protective stop did not activate kill switch")
-        steps.append(GateCheckStep("entry fill without full protective bracket activates kill switch", "ok"))
+        steps.append(
+            GateCheckStep("entry fill without full protective bracket activates kill switch", "ok")
+        )
 
         ks.deactivate()
         result = guard.record_untracked_fill(
@@ -446,10 +472,14 @@ def run_gate68_readiness_review(db_path: Path | None = None) -> GateCheckReport:
         ids = _seed_live_ticket(db, ticket)
         ingestor = LiveUserStreamIngestor(
             db_path=db,
-            guard=LiveEventGuard(db_path=db, kill_switch=KillSwitch(sentinel_path=db.with_suffix(".kill"))),
+            guard=LiveEventGuard(
+                db_path=db, kill_switch=KillSwitch(sentinel_path=db.with_suffix(".kill"))
+            ),
         )
         ingestor.process_event(
-            _order_trade_update(ids["entry"], "BUY", "LIMIT", "FILLED", "0.01", "0.01", "100.0", "1")
+            _order_trade_update(
+                ids["entry"], "BUY", "LIMIT", "FILLED", "0.01", "0.01", "100.0", "1"
+            )
         )
         with get_db(db) as conn:
             conn.execute(
@@ -479,10 +509,15 @@ def run_gate68_readiness_review(db_path: Path | None = None) -> GateCheckReport:
             "Gate 6.8",
             "ok",
             [
-                GateCheckStep("readiness reviewer requires stream, heartbeat, reconciliation, guard, burn-in", "ok"),
+                GateCheckStep(
+                    "readiness reviewer requires stream, heartbeat, reconciliation, guard, burn-in",
+                    "ok",
+                ),
                 GateCheckStep("complete local evidence produces GO", "ok"),
             ],
         )
+
+
 def _ticket(
     *,
     ticket_id: str,
@@ -508,9 +543,27 @@ def _ticket(
         leverage=leverage,
         risk_usd=0.01,
         orders=[
-            PlannedOrder(role="entry", side="buy", type="limit", symbol=symbol, price=100.0, quantity=0.01),
-            PlannedOrder(role="stop", side="sell", type="stop_market", symbol=symbol, price=99.0, quantity=0.01, reduce_only=True),
-            PlannedOrder(role="take_profit", side="sell", type="limit", symbol=symbol, price=102.0, quantity=0.01, reduce_only=True),
+            PlannedOrder(
+                role="entry", side="buy", type="limit", symbol=symbol, price=100.0, quantity=0.01
+            ),
+            PlannedOrder(
+                role="stop",
+                side="sell",
+                type="stop_market",
+                symbol=symbol,
+                price=99.0,
+                quantity=0.01,
+                reduce_only=True,
+            ),
+            PlannedOrder(
+                role="take_profit",
+                side="sell",
+                type="limit",
+                symbol=symbol,
+                price=102.0,
+                quantity=0.01,
+                reduce_only=True,
+            ),
         ],
         created_at=datetime.now(tz=UTC).isoformat(),
     )
@@ -536,7 +589,15 @@ def _seed_live_ticket(db: Path, ticket: ExecutionTicket) -> dict[str, str]:
                     (client_order_id, ticket_id, order_role, symbol, side, quantity, price, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted')
                 """,
-                (cid, ticket.ticket_id, order.role, order.symbol, order.side, order.quantity, order.price),
+                (
+                    cid,
+                    ticket.ticket_id,
+                    order.role,
+                    order.symbol,
+                    order.side,
+                    order.quantity,
+                    order.price,
+                ),
             )
             conn.execute(
                 """
@@ -545,7 +606,16 @@ def _seed_live_ticket(db: Path, ticket: ExecutionTicket) -> dict[str, str]:
                      price, quantity, status, submitted_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new', datetime('now'))
                 """,
-                (cid, ticket.ticket_id, f"ex-{cid}", order.side, order.type, order.symbol, order.price, order.quantity),
+                (
+                    cid,
+                    ticket.ticket_id,
+                    f"ex-{cid}",
+                    order.side,
+                    order.type,
+                    order.symbol,
+                    order.price,
+                    order.quantity,
+                ),
             )
         conn.commit()
     return ids
@@ -559,7 +629,13 @@ def _seed_setup_event(db: Path, event: SetupEvent) -> None:
                 (event_id, timestamp, symbol, setup_type, payload, received_at)
             VALUES (?, ?, ?, ?, ?, datetime('now'))
             """,
-            (event.event_id, event.timestamp, event.symbol, event.setup_type, event.model_dump_json()),
+            (
+                event.event_id,
+                event.timestamp,
+                event.symbol,
+                event.setup_type,
+                event.model_dump_json(),
+            ),
         )
         conn.commit()
 
@@ -705,7 +781,9 @@ def _live_config(
         environment=environment,
         allow_mainnet=allow_mainnet,
         require_gate_authorization=False,
-        gate_authorization_file="docs/gate-6-authorization.md" if environment == "mainnet" else "missing",
+        gate_authorization_file="docs/gate-6-authorization.md"
+        if environment == "mainnet"
+        else "missing",
         micro_live=micro_live or {},
     )
 

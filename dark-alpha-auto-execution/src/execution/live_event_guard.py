@@ -44,7 +44,9 @@ class LiveEventGuard:
         self._db_path = db_path
         self._kill_switch = kill_switch or get_kill_switch()
 
-    def inspect_ticket_after_fill(self, ticket: ExecutionTicket, order_role: str) -> LiveEventGuardResult:
+    def inspect_ticket_after_fill(
+        self, ticket: ExecutionTicket, order_role: str
+    ) -> LiveEventGuardResult:
         findings: list[str] = []
         if order_role == "entry" and self._has_active_live_position(ticket.ticket_id):
             missing = self._missing_protective_roles(ticket.ticket_id)
@@ -167,7 +169,9 @@ class LiveEventGuard:
 
 
 def symbols_with_unprotected_live_positions(db_path: Path | None = None) -> list[str]:
-    guard = LiveEventGuard(db_path=db_path, kill_switch=KillSwitch(sentinel_path=Path("/tmp/dark-alpha-readonly-kill")))
+    guard = LiveEventGuard(
+        db_path=db_path, kill_switch=KillSwitch(sentinel_path=Path("/tmp/dark-alpha-readonly-kill"))
+    )
     symbols: set[str] = set()
     with get_db(db_path) as conn:
         rows = conn.execute(

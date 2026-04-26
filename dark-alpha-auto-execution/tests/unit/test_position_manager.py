@@ -48,12 +48,32 @@ def _ticket() -> ExecutionTicket:
         leverage=1.0,
         risk_usd=1.0,
         orders=[
-            PlannedOrder(role="entry", side="buy", type="limit", symbol="BTCUSDT-PERP",
-                         price=100.0, quantity=1.0),
-            PlannedOrder(role="stop", side="sell", type="stop_market",
-                         symbol="BTCUSDT-PERP", price=99.0, quantity=1.0, reduce_only=True),
-            PlannedOrder(role="take_profit", side="sell", type="limit",
-                         symbol="BTCUSDT-PERP", price=102.0, quantity=1.0, reduce_only=True),
+            PlannedOrder(
+                role="entry",
+                side="buy",
+                type="limit",
+                symbol="BTCUSDT-PERP",
+                price=100.0,
+                quantity=1.0,
+            ),
+            PlannedOrder(
+                role="stop",
+                side="sell",
+                type="stop_market",
+                symbol="BTCUSDT-PERP",
+                price=99.0,
+                quantity=1.0,
+                reduce_only=True,
+            ),
+            PlannedOrder(
+                role="take_profit",
+                side="sell",
+                type="limit",
+                symbol="BTCUSDT-PERP",
+                price=102.0,
+                quantity=1.0,
+                reduce_only=True,
+            ),
         ],
         created_at=datetime.now(tz=UTC).isoformat(),
     )
@@ -134,8 +154,13 @@ def test_close_position_profit(ready_db: Path) -> None:
     pos_id = pm.open_position(ticket, entry_fill)
 
     exit_fill = Fill(
-        order_role="take_profit", side="sell", symbol="BTCUSDT-PERP",
-        price=102.0, quantity=1.0, fee_usd=0.04, reduce_only=True,
+        order_role="take_profit",
+        side="sell",
+        symbol="BTCUSDT-PERP",
+        price=102.0,
+        quantity=1.0,
+        fee_usd=0.04,
+        reduce_only=True,
     )
     pnl = pm.close_position(pos_id, exit_fill, reason="take_profit")
     assert pnl["gross_pnl_usd"] == pytest.approx(2.0)
@@ -147,13 +172,23 @@ def test_close_position_loss_short(ready_db: Path) -> None:
     ticket = _ticket().model_copy(update={"direction": "short"})
     pm.persist_ticket(ticket)
     entry_fill = Fill(
-        order_role="entry", side="sell", symbol="BTCUSDT-PERP",
-        price=100.0, quantity=1.0, fee_usd=0.02, reduce_only=False,
+        order_role="entry",
+        side="sell",
+        symbol="BTCUSDT-PERP",
+        price=100.0,
+        quantity=1.0,
+        fee_usd=0.02,
+        reduce_only=False,
     )
     pos_id = pm.open_position(ticket, entry_fill)
     exit_fill = Fill(
-        order_role="stop", side="buy", symbol="BTCUSDT-PERP",
-        price=101.0, quantity=1.0, fee_usd=0.04, reduce_only=True,
+        order_role="stop",
+        side="buy",
+        symbol="BTCUSDT-PERP",
+        price=101.0,
+        quantity=1.0,
+        fee_usd=0.04,
+        reduce_only=True,
     )
     pnl = pm.close_position(pos_id, exit_fill, reason="stop_loss")
     assert pnl["gross_pnl_usd"] == pytest.approx(-1.0)
@@ -162,7 +197,12 @@ def test_close_position_loss_short(ready_db: Path) -> None:
 def test_close_unknown_position_raises(ready_db: Path) -> None:
     pm = PositionManager(db_path=ready_db)
     exit_fill = Fill(
-        order_role="stop", side="sell", symbol="X", price=1, quantity=1, fee_usd=0,
+        order_role="stop",
+        side="sell",
+        symbol="X",
+        price=1,
+        quantity=1,
+        fee_usd=0,
         reduce_only=True,
     )
     with pytest.raises(ValueError):
@@ -192,10 +232,24 @@ def test_equity_snapshot_and_current_equity(ready_db: Path) -> None:
     # Open + close one profitable position
     ticket = _ticket()
     pm.persist_ticket(ticket)
-    entry_fill = Fill(order_role="entry", side="buy", symbol="BTCUSDT-PERP",
-                      price=100.0, quantity=1.0, fee_usd=0.02, reduce_only=False)
+    entry_fill = Fill(
+        order_role="entry",
+        side="buy",
+        symbol="BTCUSDT-PERP",
+        price=100.0,
+        quantity=1.0,
+        fee_usd=0.02,
+        reduce_only=False,
+    )
     pid = pm.open_position(ticket, entry_fill)
-    exit_fill = Fill(order_role="take_profit", side="sell", symbol="BTCUSDT-PERP",
-                     price=105.0, quantity=1.0, fee_usd=0.03, reduce_only=True)
+    exit_fill = Fill(
+        order_role="take_profit",
+        side="sell",
+        symbol="BTCUSDT-PERP",
+        price=105.0,
+        quantity=1.0,
+        fee_usd=0.03,
+        reduce_only=True,
+    )
     pm.close_position(pid, exit_fill, reason="take_profit")
     assert pm.current_equity(10_000.0) > 10_000.0

@@ -68,8 +68,19 @@ def write_snapshot(target_date: date | None = None, db_path: Path | None = None)
                  mode, gate)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
             """,
-            (date_str, starting_equity, ending, trade_count, wins, losses,
-             gross, fees, net, mode, gate),
+            (
+                date_str,
+                starting_equity,
+                ending,
+                trade_count,
+                wins,
+                losses,
+                gross,
+                fees,
+                net,
+                mode,
+                gate,
+            ),
         )
         conn.commit()
 

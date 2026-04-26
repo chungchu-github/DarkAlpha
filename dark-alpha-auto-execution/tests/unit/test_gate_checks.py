@@ -30,14 +30,18 @@ def test_gate3_restart_safety_check_passes() -> None:
     report = run_gate3_restart_safety()
 
     assert report.status == "ok"
-    assert any(step.name == "duplicate live ticket would be blocked before broker" for step in report.steps)
+    assert any(
+        step.name == "duplicate live ticket would be blocked before broker" for step in report.steps
+    )
 
 
 def test_gate35_risk_matrix_check_passes() -> None:
     report = run_gate35_risk_matrix()
 
     assert report.status == "ok"
-    assert any(step.name == "mainnet notional cap rejects oversized ticket" for step in report.steps)
+    assert any(
+        step.name == "mainnet notional cap rejects oversized ticket" for step in report.steps
+    )
 
 
 def test_gate5_mainnet_preflight_check_passes() -> None:

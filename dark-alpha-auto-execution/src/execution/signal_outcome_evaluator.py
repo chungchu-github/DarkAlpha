@@ -61,7 +61,9 @@ class SignalOutcomeEvaluator:
             if mark is None:
                 self._mark_failed(outcome, now)
                 results.append(
-                    OutcomeEvalResult(outcome.event_id, outcome.horizon, outcome.symbol, "failed", None)
+                    OutcomeEvalResult(
+                        outcome.event_id, outcome.horizon, outcome.symbol, "failed", None
+                    )
                 )
                 continue
 
@@ -78,7 +80,9 @@ class SignalOutcomeEvaluator:
                 max_adverse_pct=max_adverse,
             )
             results.append(
-                OutcomeEvalResult(outcome.event_id, outcome.horizon, outcome.symbol, "observed", mark)
+                OutcomeEvalResult(
+                    outcome.event_id, outcome.horizon, outcome.symbol, "observed", mark
+                )
             )
         if results:
             log.info("signal_outcomes.evaluated", count=len(results))
@@ -136,7 +140,9 @@ class SignalOutcomeEvaluator:
             return return_pct, None
         risk_per_unit = abs(outcome.entry_price - outcome.stop_price)
         pnl_per_unit = (
-            outcome.entry_price - mark if outcome.direction == "short" else mark - outcome.entry_price
+            outcome.entry_price - mark
+            if outcome.direction == "short"
+            else mark - outcome.entry_price
         )
         return return_pct, pnl_per_unit / risk_per_unit
 

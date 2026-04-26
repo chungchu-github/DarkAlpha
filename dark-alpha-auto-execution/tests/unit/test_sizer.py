@@ -53,7 +53,8 @@ def test_stop_distance_zero(setup_event: SetupEvent) -> None:
     zero_dist = setup_event.model_copy(
         update={
             "invalidation": InvalidationInfo(
-                condition="s", price_level=setup_event.trigger.price_level  # type: ignore[union-attr]
+                condition="s",
+                price_level=setup_event.trigger.price_level,  # type: ignore[union-attr]
             )
         }
     )

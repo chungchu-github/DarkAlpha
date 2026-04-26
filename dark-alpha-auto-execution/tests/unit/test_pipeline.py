@@ -37,9 +37,7 @@ def clean_gate(tmp_path: Path, ready_db: Path) -> RiskGate:
     return RiskGate(kill_switch=ks, breaker=cb, db_path=ready_db)
 
 
-def test_pipeline_happy_path(
-    setup_event: SetupEvent, clean_gate: RiskGate, ready_db: Path
-) -> None:
+def test_pipeline_happy_path(setup_event: SetupEvent, clean_gate: RiskGate, ready_db: Path) -> None:
     out = pipeline.run(setup_event, equity_usd=10_000.0, risk_gate=clean_gate, db_path=ready_db)
     assert isinstance(out, ExecutionTicket)
     assert out.symbol == setup_event.symbol

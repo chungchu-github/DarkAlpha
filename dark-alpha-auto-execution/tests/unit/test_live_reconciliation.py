@@ -111,9 +111,32 @@ def _ticket() -> ExecutionTicket:
         leverage=2.0,
         risk_usd=0.01,
         orders=[
-            PlannedOrder(role="entry", side="buy", type="limit", symbol="BTCUSDT-PERP", price=100.0, quantity=0.01),
-            PlannedOrder(role="stop", side="sell", type="stop_market", symbol="BTCUSDT-PERP", price=99.0, quantity=0.01, reduce_only=True),
-            PlannedOrder(role="take_profit", side="sell", type="limit", symbol="BTCUSDT-PERP", price=102.0, quantity=0.01, reduce_only=True),
+            PlannedOrder(
+                role="entry",
+                side="buy",
+                type="limit",
+                symbol="BTCUSDT-PERP",
+                price=100.0,
+                quantity=0.01,
+            ),
+            PlannedOrder(
+                role="stop",
+                side="sell",
+                type="stop_market",
+                symbol="BTCUSDT-PERP",
+                price=99.0,
+                quantity=0.01,
+                reduce_only=True,
+            ),
+            PlannedOrder(
+                role="take_profit",
+                side="sell",
+                type="limit",
+                symbol="BTCUSDT-PERP",
+                price=102.0,
+                quantity=0.01,
+                reduce_only=True,
+            ),
         ],
         created_at="2026-04-18T00:00:00+00:00",
     )
@@ -128,12 +151,16 @@ def test_reconciliation_ok_when_local_and_exchange_orders_match(
     tmp_path: Path,
 ) -> None:
     ks = _kill_switch(tmp_path)
-    result = LiveReconciler(client=FakeClient(), db_path=ready_db, kill_switch=ks).run(["BTCUSDT-PERP"])
+    result = LiveReconciler(client=FakeClient(), db_path=ready_db, kill_switch=ks).run(
+        ["BTCUSDT-PERP"]
+    )
 
     assert result.status == "ok"
     assert not ks.is_active()
     with get_db(ready_db) as conn:
-        row = conn.execute("SELECT status FROM reconciliation_runs WHERE run_id=?", (result.run_id,)).fetchone()
+        row = conn.execute(
+            "SELECT status FROM reconciliation_runs WHERE run_id=?", (result.run_id,)
+        ).fetchone()
     assert row["status"] == "ok"
 
 
@@ -171,7 +198,56 @@ def test_run_for_local_symbols_uses_active_local_order_symbols(
     ready_db: Path,
     tmp_path: Path,
 ) -> None:
-    reconciler = LiveReconciler(client=FakeClient(), db_path=ready_db, kill_switch=_kill_switch(tmp_path))
+    reconciler = LiveReconciler(
+        client=FakeClient(), db_path=ready_db, kill_switch=_kill_switch(tmp_path)
+    )
 
     assert reconciler.local_symbols() == ["BTCUSDT-PERP"]
     assert reconciler.run_for_local_symbols().status == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Stage B audit P0 — malformed positionAmt must NOT silently report 'ok'
+# ---------------------------------------------------------------------------
+
+
+def test_malformed_position_amount_marks_run_failed_and_halts(
+    ready_db: Path,
+    tmp_path: Path,
+) -> None:
+    """If Binance returns garbage in positionAmt, reconciler must fail closed
+    (status='failed' + kill switch activated). Previously ``_float`` swallowed
+    the error and returned 0.0, producing a false 'ok' that would hide a real
+    exchange position from mismatch detection."""
+    client = FakeClient()
+    client.positions = [{"positionAmt": "not-a-number"}]
+    ks = _kill_switch(tmp_path)
+
+    reconciler = LiveReconciler(client=client, db_path=ready_db, kill_switch=ks)
+
+    with pytest.raises(Exception):  # noqa: B017,PT011 — re-raised after kill switch
+        reconciler.run(["BTCUSDT-PERP"])
+
+    assert ks.is_active(), "kill switch must activate on reconciliation data error"
+    with get_db(ready_db) as conn:
+        row = conn.execute(
+            "SELECT status FROM reconciliation_runs ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    assert row["status"] == "failed"
+
+
+def test_missing_position_amount_field_treated_as_zero(
+    ready_db: Path,
+    tmp_path: Path,
+) -> None:
+    """A row with no positionAmt key is legitimately an empty/flat position;
+    that path must remain lenient (not trigger fail-closed)."""
+    client = FakeClient()
+    client.positions = [{"otherField": "ignored"}]  # no positionAmt key
+    ks = _kill_switch(tmp_path)
+
+    reconciler = LiveReconciler(client=client, db_path=ready_db, kill_switch=ks)
+    result = reconciler.run(["BTCUSDT-PERP"])
+
+    assert result.status == "ok"
+    assert not ks.is_active()

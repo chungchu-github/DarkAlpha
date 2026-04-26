@@ -28,18 +28,48 @@ def _build_ticket(direction: str = "long") -> ExecutionTicket:
         entry_side, exit_side = "sell", "buy"
         entry, stop, tp = 100.0, 101.0, 98.0
     return ExecutionTicket(
-        ticket_id=f"t-{direction}", source_event_id=f"e-{direction}",
-        symbol="BTCUSDT-PERP", direction=direction,  # type: ignore[arg-type]
-        regime="x", ranking_score=8.0, shadow_mode=True, gate="gate1",
-        entry_price=entry, stop_price=stop, take_profit_price=tp,
-        quantity=1.0, notional_usd=100.0, leverage=1.0, risk_usd=1.0,
+        ticket_id=f"t-{direction}",
+        source_event_id=f"e-{direction}",
+        symbol="BTCUSDT-PERP",
+        direction=direction,  # type: ignore[arg-type]
+        regime="x",
+        ranking_score=8.0,
+        shadow_mode=True,
+        gate="gate1",
+        entry_price=entry,
+        stop_price=stop,
+        take_profit_price=tp,
+        quantity=1.0,
+        notional_usd=100.0,
+        leverage=1.0,
+        risk_usd=1.0,
         orders=[
-            PlannedOrder(role="entry", side=entry_side, type="limit",  # type: ignore[arg-type]
-                         symbol="BTCUSDT-PERP", price=entry, quantity=1.0),
-            PlannedOrder(role="stop", side=exit_side, type="stop_market",  # type: ignore[arg-type]
-                         symbol="BTCUSDT-PERP", price=stop, quantity=1.0, reduce_only=True),
-            PlannedOrder(role="take_profit", side=exit_side, type="limit",  # type: ignore[arg-type]
-                         symbol="BTCUSDT-PERP", price=tp, quantity=1.0, reduce_only=True),
+            PlannedOrder(
+                role="entry",
+                side=entry_side,
+                type="limit",  # type: ignore[arg-type]
+                symbol="BTCUSDT-PERP",
+                price=entry,
+                quantity=1.0,
+            ),
+            PlannedOrder(
+                role="stop",
+                side=exit_side,
+                type="stop_market",  # type: ignore[arg-type]
+                symbol="BTCUSDT-PERP",
+                price=stop,
+                quantity=1.0,
+                reduce_only=True,
+            ),
+            PlannedOrder(
+                role="take_profit",
+                side=exit_side,
+                type="limit",  # type: ignore[arg-type]
+                symbol="BTCUSDT-PERP",
+                price=tp,
+                quantity=1.0,
+                reduce_only=True,
+            ),
         ],
         created_at=datetime.now(tz=UTC).isoformat(),
         metadata={"event_metadata": {"ttl_minutes": 15}},
@@ -68,9 +98,15 @@ def _open_position(ready_db: Path, direction: str = "long") -> tuple[str, Execut
     pm = PositionManager(db_path=ready_db)
     ticket = _build_ticket(direction)
     pm.persist_ticket(ticket)
-    fill = Fill(order_role="entry", side="buy" if direction == "long" else "sell",
-                symbol="BTCUSDT-PERP", price=100.0, quantity=1.0,
-                fee_usd=0.02, reduce_only=False)
+    fill = Fill(
+        order_role="entry",
+        side="buy" if direction == "long" else "sell",
+        symbol="BTCUSDT-PERP",
+        price=100.0,
+        quantity=1.0,
+        fee_usd=0.02,
+        reduce_only=False,
+    )
     pid = pm.open_position(ticket, fill)
     return pid, ticket
 

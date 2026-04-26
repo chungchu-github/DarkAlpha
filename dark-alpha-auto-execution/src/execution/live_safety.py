@@ -194,7 +194,7 @@ def client_order_id(ticket: ExecutionTicket, order: PlannedOrder) -> str:
     return f"DA{role}{side}{ticket_part}"[:36]
 
 
-def _string_list(value: object) -> list[str]:
+def _string_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value] if value else []
     if isinstance(value, list | tuple):
@@ -202,7 +202,7 @@ def _string_list(value: object) -> list[str]:
     return []
 
 
-def _positive_float(value: object) -> float:
+def _positive_float(value: Any) -> float:
     try:
         return float(value or 0)
     except (TypeError, ValueError):

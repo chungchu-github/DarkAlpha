@@ -31,16 +31,31 @@ def _ticket(direction: str = "long") -> ExecutionTicket:
         risk_usd=1.0,
         orders=[
             PlannedOrder(
-                role="entry", side=entry_side, type="limit", symbol="BTCUSDT-PERP",  # type: ignore[arg-type]
-                price=entry, quantity=1.0, reduce_only=False,
+                role="entry",
+                side=entry_side,
+                type="limit",
+                symbol="BTCUSDT-PERP",  # type: ignore[arg-type]
+                price=entry,
+                quantity=1.0,
+                reduce_only=False,
             ),
             PlannedOrder(
-                role="stop", side=exit_side, type="stop_market", symbol="BTCUSDT-PERP",  # type: ignore[arg-type]
-                price=stop, quantity=1.0, reduce_only=True,
+                role="stop",
+                side=exit_side,
+                type="stop_market",
+                symbol="BTCUSDT-PERP",  # type: ignore[arg-type]
+                price=stop,
+                quantity=1.0,
+                reduce_only=True,
             ),
             PlannedOrder(
-                role="take_profit", side=exit_side, type="limit", symbol="BTCUSDT-PERP",  # type: ignore[arg-type]
-                price=tp, quantity=1.0, reduce_only=True,
+                role="take_profit",
+                side=exit_side,
+                type="limit",
+                symbol="BTCUSDT-PERP",  # type: ignore[arg-type]
+                price=tp,
+                quantity=1.0,
+                reduce_only=True,
             ),
         ],
         created_at=datetime.now(tz=UTC).isoformat(),

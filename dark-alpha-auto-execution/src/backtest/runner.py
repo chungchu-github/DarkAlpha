@@ -160,7 +160,9 @@ def _load_signals(db_path: Path | None) -> list[BacktestSignal]:
                 direction=row["direction"],
                 entry_price=float(row["entry_price"]),
                 stop_price=float(row["stop_price"]),
-                take_profit_price=float(row["take_profit_price"]) if row["take_profit_price"] is not None else None,
+                take_profit_price=float(row["take_profit_price"])
+                if row["take_profit_price"] is not None
+                else None,
                 ttl_minutes=max(int(row["ttl_minutes"] or 15), 1),
             )
         )
@@ -195,7 +197,9 @@ def _simulate(
             continue
         exit_reason = _exit_touched(signal, candle)
         if exit_reason is not None:
-            exit_price = signal.stop_price if exit_reason == "stop_loss" else signal.take_profit_price
+            exit_price = (
+                signal.stop_price if exit_reason == "stop_loss" else signal.take_profit_price
+            )
             assert exit_price is not None
             return _trade(
                 signal,
@@ -273,7 +277,9 @@ def _measure(
 ) -> tuple[float | None, float | None]:
     if entry_price is None or exit_price is None:
         return None, None
-    pnl_per_unit = exit_price - entry_price if signal.direction == "long" else entry_price - exit_price
+    pnl_per_unit = (
+        exit_price - entry_price if signal.direction == "long" else entry_price - exit_price
+    )
     risk_per_unit = abs(entry_price - signal.stop_price)
     r_multiple = pnl_per_unit / risk_per_unit if risk_per_unit > 0 else None
     return_pct = pnl_per_unit / entry_price if entry_price else None

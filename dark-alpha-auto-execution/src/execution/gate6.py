@@ -68,7 +68,9 @@ class Gate6PreflightResult:
         ]
         lines.extend(f"- {item}" for item in self.checks)
         lines += ["", "## Symbols", ""]
-        lines.append("| Symbol | Open Orders | Open Algo Orders | Position Amt | Leverage | Margin | Side |")
+        lines.append(
+            "| Symbol | Open Orders | Open Algo Orders | Position Amt | Leverage | Margin | Side |"
+        )
         lines.append("|---|---:|---:|---:|---:|---|---|")
         for symbol in self.symbols:
             lines.append(
@@ -244,7 +246,9 @@ def repair_local_flat_after_closeout(
 
     broker = BinanceFuturesBroker(client=client, config=config)
     exchange_client = client or broker.client
-    position_amt = sum(_float(row.get("positionAmt")) for row in exchange_client.position_risk(symbol))
+    position_amt = sum(
+        _float(row.get("positionAmt")) for row in exchange_client.position_risk(symbol)
+    )
     if abs(position_amt) > 0:
         raise Gate6Error(f"gate6_repair_exchange_position_not_flat:{position_amt:g}")
     if exchange_client.open_orders(symbol):
@@ -264,11 +268,7 @@ def repair_local_flat_after_closeout(
                AND status IN ('pending','open','partial')
             """
         ).fetchall()
-        matching = [
-            row
-            for row in rows
-            if normalize_symbol(str(row["symbol"])) == normalized
-        ]
+        matching = [row for row in rows if normalize_symbol(str(row["symbol"])) == normalized]
         for row in matching:
             conn.execute(
                 """
@@ -524,7 +524,10 @@ def write_closeout_report(
 ) -> Path:
     out_dir = reports_dir or Path("reports")
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"gate6-closeout-{normalize_symbol(symbol)}-{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%SZ')}.md"
+    out = (
+        out_dir
+        / f"gate6-closeout-{normalize_symbol(symbol)}-{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%SZ')}.md"
+    )
     lines = [
         f"# Gate 6 Closeout - {symbol}",
         "",
@@ -548,7 +551,11 @@ def write_closeout_report(
         lines.append("| Client Order ID | Exchange | Local | Filled | Avg |")
         lines.append("|---|---|---|---:|---:|")
         for item in sync_results:
-            avg = "" if item.average_price is None else f"{item.average_price:.8f}".rstrip("0").rstrip(".")
+            avg = (
+                ""
+                if item.average_price is None
+                else f"{item.average_price:.8f}".rstrip("0").rstrip(".")
+            )
             lines.append(
                 f"| `{item.client_order_id}` | {item.exchange_status} | {item.local_status} | "
                 f"{item.filled_quantity:g} | {avg} |"
@@ -594,7 +601,9 @@ def _validate_canary_conditional_triggers(
     """
     if direction == "long":
         if stop_price >= mark_price:
-            raise Gate6Error(f"gate6_stop_would_immediately_trigger:stop={stop_price:g},mark={mark_price:g}")
+            raise Gate6Error(
+                f"gate6_stop_would_immediately_trigger:stop={stop_price:g},mark={mark_price:g}"
+            )
         if take_profit_price <= mark_price:
             raise Gate6Error(
                 f"gate6_take_profit_would_immediately_trigger:"
@@ -603,7 +612,9 @@ def _validate_canary_conditional_triggers(
         return
     if direction == "short":
         if stop_price <= mark_price:
-            raise Gate6Error(f"gate6_stop_would_immediately_trigger:stop={stop_price:g},mark={mark_price:g}")
+            raise Gate6Error(
+                f"gate6_stop_would_immediately_trigger:stop={stop_price:g},mark={mark_price:g}"
+            )
         if take_profit_price >= mark_price:
             raise Gate6Error(
                 f"gate6_take_profit_would_immediately_trigger:"
@@ -652,7 +663,7 @@ def _last_price(symbol: str) -> float:
     return float(resp.json()["price"])
 
 
-def _float(value: object) -> float:
+def _float(value: Any) -> float:
     try:
         return float(value or 0)
     except (TypeError, ValueError):

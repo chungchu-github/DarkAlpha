@@ -69,18 +69,14 @@ def test_positions_empty(ready_db: Path, reply: handlers.Reply, captured: list[s
     assert captured == ["No open positions."]
 
 
-def test_positions_lists_open(
-    ready_db: Path, reply: handlers.Reply, captured: list[str]
-) -> None:
+def test_positions_lists_open(ready_db: Path, reply: handlers.Reply, captured: list[str]) -> None:
     _seed_open_position(ready_db)
     handlers.handle_positions(reply, [])
     assert "BTCUSDT-PERP" in captured[0]
     assert "qty=0.1000" in captured[0]
 
 
-def test_pnl_today_counts_net(
-    ready_db: Path, reply: handlers.Reply, captured: list[str]
-) -> None:
+def test_pnl_today_counts_net(ready_db: Path, reply: handlers.Reply, captured: list[str]) -> None:
     _seed_closed_position_today(ready_db, net=7.5)
     handlers.handle_pnl_today(reply, [])
     assert "trades: 1" in captured[0]
@@ -155,6 +151,14 @@ def test_breakers_none_initially(
 
 
 def test_dispatch_table_coverage() -> None:
-    for cmd in ("/help", "/status", "/halt", "/resume",
-                "/positions", "/pnl_today", "/breakers", "/start"):
+    for cmd in (
+        "/help",
+        "/status",
+        "/halt",
+        "/resume",
+        "/positions",
+        "/pnl_today",
+        "/breakers",
+        "/start",
+    ):
         assert cmd in handlers.DISPATCH

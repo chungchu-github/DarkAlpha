@@ -543,7 +543,9 @@ class PositionManager:
             price=fill.price,
         )
 
-    def expire_pending_position(self, position_id: str, ticket_id: str, reason: str = "ttl_expired") -> None:
+    def expire_pending_position(
+        self, position_id: str, ticket_id: str, reason: str = "ttl_expired"
+    ) -> None:
         with get_db(self._db_path) as conn:
             conn.execute(
                 """

@@ -19,11 +19,7 @@ class FakeHistoricalSource(HistoricalPriceSource):
         self._candles = candles
 
     def candles(self, symbol: str, start: datetime, end: datetime) -> list[HistoricalCandle]:
-        return [
-            candle
-            for candle in self._candles.get(symbol, [])
-            if start <= candle.ts <= end
-        ]
+        return [candle for candle in self._candles.get(symbol, []) if start <= candle.ts <= end]
 
 
 def _event(event_id: str, ts: datetime, direction: str = "long") -> SetupEvent:
@@ -56,7 +52,13 @@ def _persist(event: SetupEvent, db_path) -> None:
                 (event_id, timestamp, symbol, setup_type, payload, received_at)
             VALUES (?, ?, ?, ?, ?, datetime('now'))
             """,
-            (event.event_id, event.timestamp, event.symbol, event.setup_type, event.model_dump_json()),
+            (
+                event.event_id,
+                event.timestamp,
+                event.symbol,
+                event.setup_type,
+                event.model_dump_json(),
+            ),
         )
         conn.commit()
     record_signal(event, db_path=db_path)

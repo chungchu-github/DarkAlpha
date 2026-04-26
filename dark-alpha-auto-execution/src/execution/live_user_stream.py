@@ -494,7 +494,9 @@ async def run_user_stream(
                 client.close(listen_key)
 
 
-async def _keepalive_loop(client: BinanceUserStreamClient, listen_key: str, keepalive_seconds: int) -> None:
+async def _keepalive_loop(
+    client: BinanceUserStreamClient, listen_key: str, keepalive_seconds: int
+) -> None:
     while True:
         await asyncio.sleep(keepalive_seconds)
         client.keepalive(listen_key)
@@ -541,7 +543,7 @@ def _avg_price(order: dict[str, Any]) -> float | None:
     return None
 
 
-def _float(value: object) -> float:
+def _float(value: Any) -> float:
     try:
         return float(value or 0)
     except (TypeError, ValueError):

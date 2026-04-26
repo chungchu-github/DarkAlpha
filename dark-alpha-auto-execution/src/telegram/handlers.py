@@ -161,9 +161,9 @@ DISPATCH: dict[str, Callable[[Reply, list[str]], None]] = {
 def _open_and_today_pnl() -> tuple[int, float, int]:
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
     with get_db() as conn:
-        open_n = conn.execute(
-            "SELECT COUNT(*) AS n FROM positions WHERE status='open'"
-        ).fetchone()["n"]
+        open_n = conn.execute("SELECT COUNT(*) AS n FROM positions WHERE status='open'").fetchone()[
+            "n"
+        ]
         row = conn.execute(
             "SELECT COUNT(*) AS n, COALESCE(SUM(net_pnl_usd), 0) AS net "
             "FROM positions WHERE status='closed' AND substr(closed_at,1,10)=?",

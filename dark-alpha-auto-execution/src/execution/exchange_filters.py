@@ -42,7 +42,9 @@ class SymbolFilters:
     def quantity(self, value: float) -> str:
         rounded = _round_down(Decimal(str(value)), self.step_size)
         if rounded < self.min_qty:
-            raise ExchangeFilterError(f"quantity_below_min_qty:{self.symbol}:{rounded}<{self.min_qty}")
+            raise ExchangeFilterError(
+                f"quantity_below_min_qty:{self.symbol}:{rounded}<{self.min_qty}"
+            )
         return _fmt_decimal(rounded)
 
     def assert_min_notional(self, *, price: float, quantity: float) -> None:
@@ -115,9 +117,13 @@ def parse_symbol_filters(payload: dict[str, Any]) -> SymbolFilters:
     market_lot_filter = by_type.get("MARKET_LOT_SIZE") or {}
     min_notional_filter = by_type.get("MIN_NOTIONAL") or {}
 
-    step_size = Decimal(str(lot_filter.get("stepSize") or market_lot_filter.get("stepSize") or "0.001"))
+    step_size = Decimal(
+        str(lot_filter.get("stepSize") or market_lot_filter.get("stepSize") or "0.001")
+    )
     min_qty = Decimal(str(lot_filter.get("minQty") or market_lot_filter.get("minQty") or step_size))
-    min_notional = Decimal(str(min_notional_filter.get("notional") or min_notional_filter.get("minNotional") or "0"))
+    min_notional = Decimal(
+        str(min_notional_filter.get("notional") or min_notional_filter.get("minNotional") or "0")
+    )
 
     return SymbolFilters(
         symbol=symbol,

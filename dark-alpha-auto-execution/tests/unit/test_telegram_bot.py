@@ -73,10 +73,12 @@ def test_unknown_command_returns_help(admin_env: int, ready_db: Path) -> None:
 
 
 def test_offset_advances(admin_env: int, ready_db: Path) -> None:
-    client = FakeClient([
-        [_update(5, admin_env, "/help")],
-        [_update(7, admin_env, "/help")],
-    ])
+    client = FakeClient(
+        [
+            [_update(5, admin_env, "/help")],
+            [_update(7, admin_env, "/help")],
+        ]
+    )
     bot = Bot(client=client)  # type: ignore[arg-type]
     bot.poll_once()
     assert bot._offset == 6

@@ -92,7 +92,9 @@ class Gate6ReadinessReviewer:
         with get_db(self._db_path) as conn:
             tables = {
                 str(row["name"])
-                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
             }
         missing = sorted(needed - tables)
         if missing:
@@ -168,7 +170,9 @@ class Gate6ReadinessReviewer:
                 """
             ).fetchone()
         if row is None:
-            return Gate6ReadinessCheck("6.5", "latest reconciliation", "fail", "no reconciliation run")
+            return Gate6ReadinessCheck(
+                "6.5", "latest reconciliation", "fail", "no reconciliation run"
+            )
         if str(row["status"]) != "ok":
             return Gate6ReadinessCheck("6.5", "latest reconciliation", "fail", str(row["status"]))
         if symbols:
@@ -180,7 +184,9 @@ class Gate6ReadinessReviewer:
             }
             missing = sorted(set(symbols) - reconciled)
             if missing:
-                return Gate6ReadinessCheck("6.5", "latest reconciliation", "fail", "missing:" + ",".join(missing))
+                return Gate6ReadinessCheck(
+                    "6.5", "latest reconciliation", "fail", "missing:" + ",".join(missing)
+                )
         return Gate6ReadinessCheck("6.5", "latest reconciliation", "ok", str(row["created_at"]))
 
     def _check_event_guard_state(self) -> Gate6ReadinessCheck:
@@ -195,13 +201,17 @@ class Gate6ReadinessReviewer:
                 """
             ).fetchall()
         if rows:
-            return Gate6ReadinessCheck("6.6", "event-driven guard", "fail", ";".join(str(r["reason"]) for r in rows))
+            return Gate6ReadinessCheck(
+                "6.6", "event-driven guard", "fail", ";".join(str(r["reason"]) for r in rows)
+            )
         return Gate6ReadinessCheck("6.6", "event-driven guard", "ok")
 
     def _check_open_positions_protected(self) -> Gate6ReadinessCheck:
         unprotected = symbols_with_unprotected_live_positions(self._db_path)
         if unprotected:
-            return Gate6ReadinessCheck("6.6", "open positions protected", "fail", ",".join(unprotected))
+            return Gate6ReadinessCheck(
+                "6.6", "open positions protected", "fail", ",".join(unprotected)
+            )
         return Gate6ReadinessCheck("6.6", "open positions protected", "ok")
 
     def _check_burn_in(self, symbols: list[str] | None, required_hours: int) -> Gate6ReadinessCheck:
@@ -246,7 +256,9 @@ class Gate6ReadinessReviewer:
 
     def _check_kill_switch_clear(self) -> Gate6ReadinessCheck:
         if self._kill_switch.is_active():
-            return Gate6ReadinessCheck("6.8", "kill switch clear", "fail", str(self._kill_switch.sentinel_path()))
+            return Gate6ReadinessCheck(
+                "6.8", "kill switch clear", "fail", str(self._kill_switch.sentinel_path())
+            )
         return Gate6ReadinessCheck("6.8", "kill switch clear", "ok")
 
     def _persist(self, report: Gate6ReadinessReport) -> None:

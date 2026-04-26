@@ -102,18 +102,22 @@ def test_tick_exception_does_not_break_loop(
         def tick(self) -> list[object]:
             raise RuntimeError("boom")
 
-    sup = Supervisor(evaluator=BadEvaluator(), eval_interval_sec=0,  # type: ignore[arg-type]
-                     db_path=ready_db)
+    sup = Supervisor(
+        evaluator=BadEvaluator(),
+        eval_interval_sec=0,  # type: ignore[arg-type]
+        db_path=ready_db,
+    )
     monkeypatch.setattr(sup, "_sleep", lambda s: None)
     ticks = sup.run(max_ticks=2)
     assert ticks == 2  # loop survived
 
 
-def test_day_rollover_writes_snapshot(
-    ready_db: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    sup = Supervisor(evaluator=FakeEvaluator(), eval_interval_sec=0,  # type: ignore[arg-type]
-                     db_path=ready_db)
+def test_day_rollover_writes_snapshot(ready_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sup = Supervisor(
+        evaluator=FakeEvaluator(),
+        eval_interval_sec=0,  # type: ignore[arg-type]
+        db_path=ready_db,
+    )
     monkeypatch.setattr(sup, "_sleep", lambda s: None)
 
     yesterday = datetime.now(tz=UTC).date() - timedelta(days=1)
@@ -130,11 +134,12 @@ def test_day_rollover_writes_snapshot(
     assert calls == [yesterday]
 
 
-def test_request_stop_exits_cleanly(
-    ready_db: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    sup = Supervisor(evaluator=FakeEvaluator(), eval_interval_sec=0,  # type: ignore[arg-type]
-                     db_path=ready_db)
+def test_request_stop_exits_cleanly(ready_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sup = Supervisor(
+        evaluator=FakeEvaluator(),
+        eval_interval_sec=0,  # type: ignore[arg-type]
+        db_path=ready_db,
+    )
     monkeypatch.setattr(sup, "_sleep", lambda s: None)
     sup.request_stop()
     ticks = sup.run(max_ticks=10)
@@ -145,7 +150,7 @@ def test_live_mode_runs_startup_reconciliation_once(
     ready_db: Path,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    ) -> None:
+) -> None:
     cfg = tmp_path / "config"
     cfg.mkdir(exist_ok=True)
     (cfg / "main.yaml").write_text("mode: live\nlive:\n  environment: testnet\n")
@@ -179,7 +184,7 @@ def test_live_mode_reconciliation_mismatch_blocks_evaluator(
     ready_db: Path,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    ) -> None:
+) -> None:
     cfg = tmp_path / "config"
     cfg.mkdir(exist_ok=True)
     (cfg / "main.yaml").write_text("mode: live\nlive:\n  environment: testnet\n")

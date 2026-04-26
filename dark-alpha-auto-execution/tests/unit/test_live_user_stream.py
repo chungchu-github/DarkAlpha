@@ -67,9 +67,32 @@ def _ticket() -> ExecutionTicket:
         leverage=1.0,
         risk_usd=0.01,
         orders=[
-            PlannedOrder(role="entry", side="buy", type="limit", symbol="BTCUSDT-PERP", price=100.0, quantity=0.01),
-            PlannedOrder(role="stop", side="sell", type="stop_market", symbol="BTCUSDT-PERP", price=99.0, quantity=0.01, reduce_only=True),
-            PlannedOrder(role="take_profit", side="sell", type="limit", symbol="BTCUSDT-PERP", price=102.0, quantity=0.01, reduce_only=True),
+            PlannedOrder(
+                role="entry",
+                side="buy",
+                type="limit",
+                symbol="BTCUSDT-PERP",
+                price=100.0,
+                quantity=0.01,
+            ),
+            PlannedOrder(
+                role="stop",
+                side="sell",
+                type="stop_market",
+                symbol="BTCUSDT-PERP",
+                price=99.0,
+                quantity=0.01,
+                reduce_only=True,
+            ),
+            PlannedOrder(
+                role="take_profit",
+                side="sell",
+                type="limit",
+                symbol="BTCUSDT-PERP",
+                price=102.0,
+                quantity=0.01,
+                reduce_only=True,
+            ),
         ],
         created_at="2026-04-18T00:00:00+00:00",
     )
@@ -118,8 +141,12 @@ def test_user_stream_entry_fill_opens_position(ready_db: Path) -> None:
     assert result is not None
     assert result.action == "known_order:entry"
     with get_db(ready_db) as conn:
-        order = conn.execute("SELECT status, fill_quantity, fill_price FROM orders WHERE order_id=?", (cid,)).fetchone()
-        position = conn.execute("SELECT status, filled_quantity, entry_price FROM positions").fetchone()
+        order = conn.execute(
+            "SELECT status, fill_quantity, fill_price FROM orders WHERE order_id=?", (cid,)
+        ).fetchone()
+        position = conn.execute(
+            "SELECT status, filled_quantity, entry_price FROM positions"
+        ).fetchone()
         event_count = conn.execute("SELECT COUNT(*) AS n FROM live_stream_events").fetchone()
     assert order["status"] == "filled"
     assert order["fill_quantity"] == 0.01
@@ -188,8 +215,12 @@ def test_user_stream_emergency_close_closes_active_symbol_position(ready_db: Pat
     assert result is not None
     assert result.action == "emergency_close"
     with get_db(ready_db) as conn:
-        position = conn.execute("SELECT status, exit_reason, exit_price, filled_quantity FROM positions").fetchone()
-        flatten_order = conn.execute("SELECT status, fill_quantity FROM orders WHERE order_id='DACLOSEBTCUSDT123'").fetchone()
+        position = conn.execute(
+            "SELECT status, exit_reason, exit_price, filled_quantity FROM positions"
+        ).fetchone()
+        flatten_order = conn.execute(
+            "SELECT status, fill_quantity FROM orders WHERE order_id='DACLOSEBTCUSDT123'"
+        ).fetchone()
     assert position["status"] == "closed"
     assert position["exit_reason"] == "manual"
     assert position["exit_price"] == 100.2
@@ -231,7 +262,9 @@ def test_user_stream_emergency_close_partial_fills_are_delta_applied(ready_db: P
     assert second.fill_delta == pytest.approx(0.006)
     with get_db(ready_db) as conn:
         position = conn.execute("SELECT status, filled_quantity FROM positions").fetchone()
-        flatten_order = conn.execute("SELECT status, fill_quantity FROM orders WHERE order_id='DACLOSEBTCUSDT456'").fetchone()
+        flatten_order = conn.execute(
+            "SELECT status, fill_quantity FROM orders WHERE order_id='DACLOSEBTCUSDT456'"
+        ).fetchone()
     assert position["status"] == "closed"
     assert position["filled_quantity"] == 0
     assert flatten_order["status"] == "filled"

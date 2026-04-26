@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -290,7 +291,7 @@ def _avg_price(payload: dict[str, object]) -> float | None:
     return None
 
 
-def _float(value: object) -> float:
+def _float(value: Any) -> float:
     try:
         return float(value or 0)
     except (TypeError, ValueError):
