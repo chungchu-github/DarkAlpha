@@ -251,3 +251,92 @@ def test_missing_position_amount_field_treated_as_zero(
 
     assert result.status == "ok"
     assert not ks.is_active()
+
+
+# ---------------------------------------------------------------------------
+# Incident 2026-04-26 — reconcile must invoke LiveEventGuard so a fill that
+# bypassed the user-stream path (REST-only sync, missed event, etc.) cannot
+# leave a position unprotected just because local↔exchange counts match.
+# ---------------------------------------------------------------------------
+
+
+def _insert_open_live_position(db: Path, *, ticket_id: str, symbol: str = "BTCUSDT-PERP") -> None:
+    with get_db(db) as conn:
+        conn.execute(
+            """INSERT INTO positions
+               (position_id, ticket_id, symbol, direction, status, shadow_mode,
+                quantity, filled_quantity, entry_price, opened_at)
+               VALUES (?, ?, ?, 'long', 'open', 0, 0.01, 0.01, 100, datetime('now'))""",
+            (f"pos-{ticket_id}", ticket_id, symbol),
+        )
+        conn.commit()
+
+
+def _insert_protective_orders(
+    db: Path, *, ticket_id: str, symbol: str = "BTCUSDT-PERP", status: str = "submitted"
+) -> None:
+    with get_db(db) as conn:
+        conn.execute(
+            """INSERT INTO order_idempotency
+               (client_order_id, ticket_id, order_role, symbol, side, quantity, price, status)
+               VALUES (?, ?, 'stop', ?, 'sell', 0.01, 99, ?)""",
+            (f"DASTS{ticket_id[:10]}", ticket_id, symbol, status),
+        )
+        conn.execute(
+            """INSERT INTO order_idempotency
+               (client_order_id, ticket_id, order_role, symbol, side, quantity, price, status)
+               VALUES (?, ?, 'take_profit', ?, 'sell', 0.01, 102, ?)""",
+            (f"DATAS{ticket_id[:10]}", ticket_id, symbol, status),
+        )
+        conn.commit()
+
+
+def test_reconcile_halts_on_unprotected_open_position(
+    ready_db: Path,
+    tmp_path: Path,
+) -> None:
+    """Reproduces the 2026-04-26 incident: an entry filled but stop/TP were
+    never accepted by the exchange. Local-↔-exchange counts agree (both
+    have a position, neither has open orders) so the legacy mismatch
+    detection returns ok. The guard must catch this and halt."""
+    _insert_open_live_position(ready_db, ticket_id="ticket-1")
+    # Note: ready_db's order_idempotency only contains the entry order;
+    # there are no protective rows at all, which is the worst-case orphan.
+
+    client = FakeClient()
+    client.open = []  # exchange has no open orders for this symbol
+    client.positions = [{"positionAmt": "0.01"}]
+    ks = _kill_switch(tmp_path)
+
+    result = LiveReconciler(client=client, db_path=ready_db, kill_switch=ks).run(["BTCUSDT-PERP"])
+
+    assert result.status == "mismatch"
+    assert ks.is_active()
+    assert any(
+        "live_position_missing_protective_orders" in m and "ticket-1" in m
+        for m in result.mismatches
+    ), result.mismatches
+
+
+def test_reconcile_clean_when_protective_orders_active(
+    ready_db: Path,
+    tmp_path: Path,
+) -> None:
+    """Symmetric to the halt test: an open live position WITH active stop +
+    take_profit rows must not trigger the guard."""
+    _insert_open_live_position(ready_db, ticket_id="ticket-1")
+    _insert_protective_orders(ready_db, ticket_id="ticket-1", status="submitted")
+
+    client = FakeClient()
+    client.open = [
+        {"clientOrderId": "DAENBTICKET1"},
+        {"clientOrderId": "DASTSticket-1"},
+    ]
+    client.open_algo = [{"clientAlgoId": "DATASticket-1"}]
+    client.positions = [{"positionAmt": "0.01"}]
+    ks = _kill_switch(tmp_path)
+
+    result = LiveReconciler(client=client, db_path=ready_db, kill_switch=ks).run(["BTCUSDT-PERP"])
+
+    assert result.status == "ok", result.mismatches
+    assert not ks.is_active()

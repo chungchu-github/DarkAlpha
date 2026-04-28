@@ -63,6 +63,50 @@ case "${MODE_ENV}" in
     ;;
 esac
 
+# Refuse to start with dirty operational state. A burn-in inheriting open live
+# positions / in-flight orders cannot produce clean evidence — the inherited
+# state poisons every gate6 readiness snapshot regardless of how the run goes.
+# See docs/incidents/2026-04-26-bracket-reject-orphan-position.md.
+DIRTY_REPORT=$(poetry run python - <<'PY'
+from storage.db import get_db
+
+dirty: list[str] = []
+with get_db() as conn:
+    open_positions = conn.execute(
+        """SELECT position_id, symbol, status FROM positions
+            WHERE shadow_mode=0 AND status IN ('pending','open','partial')"""
+    ).fetchall()
+    for row in open_positions:
+        dirty.append(f"position {row['position_id']} {row['symbol']} {row['status']}")
+    inflight_orders = conn.execute(
+        """SELECT client_order_id, symbol, status FROM order_idempotency
+            WHERE status IN ('reserved','submitted','acknowledged')"""
+    ).fetchall()
+    for row in inflight_orders:
+        dirty.append(
+            f"order {row['client_order_id']} {row['symbol']} {row['status']}"
+        )
+if dirty:
+    print("DIRTY")
+    for line in dirty:
+        print(f"  {line}")
+else:
+    print("CLEAN")
+PY
+)
+case "${DIRTY_REPORT}" in
+  CLEAN)
+    echo "  state   : clean (no open live positions or in-flight orders)"
+    ;;
+  *)
+    echo "❌ burn-in refuses to start with dirty operational state:"
+    echo "${DIRTY_REPORT}" | sed -n '2,$p'
+    echo
+    echo "Resolve via dark-alpha CLI (cancel orders / close positions) before retrying."
+    exit 2
+    ;;
+esac
+
 if ! command -v tmux >/dev/null 2>&1; then
   echo "❌ tmux not installed. brew install tmux"
   exit 1

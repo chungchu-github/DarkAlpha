@@ -1,0 +1,40 @@
+▶ supervisor starting (interval=30s). Ctrl-C to stop.
+2026-04-27 00:48:11 [info     ] supervisor.start               interval_sec=30
+2026-04-27 00:48:11 [info     ] live_reconciliation.recorded   run_id=01KQ5B20WF1KR2JF0PSHMGZT21 status=started
+2026-04-27 00:48:11 [info     ] live_reconciliation.recorded   run_id=01KQ5B20WF1KR2JF0PSHMGZT21 status=ok
+2026-04-27 00:48:12 [info     ] live_order_sync.order_not_found client_order_id=DAENBNG3PKTNN5Z2MQCNEXR previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:13 [info     ] live_order_sync.order_not_found client_order_id=DASTSNG3PKTNN5Z2MQCNEXR previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:13 [info     ] live_order_sync.order_not_found client_order_id=DATASNG3PKTNN5Z2MQCNEXR previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:13 [info     ] position.live_entry_updated    filled_quantity=0.001 status=open ticket_id=01KQ47CFJB18G3J9A3PE3EZWFR
+2026-04-27 00:48:14 [info     ] live_order_sync.order_not_found client_order_id=DASTSJB18G3J9A3PE3EZWFR previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:14 [info     ] live_order_sync.order_not_found client_order_id=DATASJB18G3J9A3PE3EZWFR previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:15 [info     ] live_order_sync.order_not_found client_order_id=DAENBS4XM3X98YKSR5W726W previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:15 [info     ] live_order_sync.order_not_found client_order_id=DASTSS4XM3X98YKSR5W726W previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:15 [info     ] live_order_sync.order_not_found client_order_id=DATPSS4XM3X98YKSR5W726W previous_status=reserved symbol=BTCUSDT-PERP
+2026-04-27 00:48:15 [info     ] live_order_sync.symbol         count=9 symbol=BTCUSDT-PERP
+2026-04-27 00:48:15 [info     ] supervisor.live_order_sync     count=9
+2026-04-27 06:47:30 [info     ] signal_outcomes.evaluated      count=1
+2026-04-27 06:47:30 [info     ] supervisor.signal_outcomes     observed_count=1
+2026-04-27 06:57:31 [info     ] signal_outcomes.evaluated      count=1
+2026-04-27 06:57:31 [info     ] supervisor.signal_outcomes     observed_count=1
+2026-04-27 07:42:33 [info     ] signal_outcomes.evaluated      count=1
+2026-04-27 07:42:33 [info     ] supervisor.signal_outcomes     observed_count=1
+2026-04-27 08:00:04 [info     ] reporting.daily_snapshot_written date=2026-04-26 ending_equity=10000.0 fees=0.0 gate=gate1 gross_pnl=0.0 loss_count=0 mode=live net_pnl=0.0 starting_equity=10000.0 trade_count=4 win_count=0
+2026-04-27 10:42:41 [info     ] signal_outcomes.evaluated      count=1
+2026-04-27 10:42:41 [info     ] supervisor.signal_outcomes     observed_count=1
+2026-04-27 23:01:41 [info     ] signal_outcomes.evaluated      count=1
+2026-04-27 23:01:41 [info     ] supervisor.signal_outcomes     observed_count=1
+2026-04-27 23:11:42 [info     ] signal_outcomes.evaluated      count=1
+2026-04-27 23:11:42 [info     ] supervisor.signal_outcomes     observed_count=1
+2026-04-27 23:37:13 [info     ] signal_outcomes.evaluated      count=2
+2026-04-27 23:37:13 [info     ] supervisor.signal_outcomes     observed_count=2
+2026-04-27 23:47:15 [info     ] signal_outcomes.evaluated      count=2
+2026-04-27 23:47:15 [info     ] supervisor.signal_outcomes     observed_count=2
+2026-04-27 23:56:45 [info     ] signal_outcomes.evaluated      count=1
+2026-04-27 23:56:45 [info     ] supervisor.signal_outcomes     observed_count=1
+2026-04-28 00:07:16 [info     ] signal_outcomes.evaluated      count=2
+2026-04-28 00:07:16 [info     ] supervisor.signal_outcomes     observed_count=2
+2026-04-28 00:17:17 [info     ] signal_outcomes.evaluated      count=2
+2026-04-28 00:17:17 [info     ] supervisor.signal_outcomes     observed_count=2
+2026-04-28 00:31:49 [info     ] signal_outcomes.evaluated      count=2
+2026-04-28 00:31:49 [info     ] supervisor.signal_outcomes     observed_count=2

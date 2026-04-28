@@ -19,6 +19,7 @@ from .binance_testnet_broker import (
     _base_url_for_environment,
     normalize_symbol,
 )
+from .live_event_guard import LiveEventGuard
 from .live_order_sync import LiveOrderStatusSync
 from .live_safety import load_live_execution_config
 
@@ -56,6 +57,7 @@ class LiveReconciler:
         db_path: Path | None = None,
         kill_switch: KillSwitch | None = None,
         order_sync: LiveOrderStatusSync | None = None,
+        live_event_guard: LiveEventGuard | None = None,
     ) -> None:
         config = load_live_execution_config()
         self._client = client or BinanceSignedClient(
@@ -65,12 +67,16 @@ class LiveReconciler:
         self._db_path = db_path
         self._kill_switch = kill_switch or get_kill_switch()
         self._order_sync = order_sync or LiveOrderStatusSync(client=self._client, db_path=db_path)
+        self._live_event_guard = live_event_guard or LiveEventGuard(
+            db_path=db_path, kill_switch=self._kill_switch
+        )
 
     def run(self, symbols: list[str]) -> ReconciliationResult:
         run_id = str(ULID())
         self._record_run(run_id, "started", {"symbols": symbols})
         try:
             symbol_results = [self._reconcile_symbol(symbol) for symbol in symbols]
+            symbol_results = self._merge_guard_findings(symbol_results)
             status = "mismatch" if any(r.mismatches for r in symbol_results) else "ok"
             result = ReconciliationResult(run_id=run_id, status=status, symbols=symbol_results)
             self._record_run(run_id, status, _result_details(result))
@@ -186,6 +192,55 @@ class LiveReconciler:
             qty = _float(row["filled_quantity"])
             amount += qty if row["direction"] == "long" else -qty
         return amount
+
+    def _merge_guard_findings(
+        self, symbol_results: list[SymbolReconciliation]
+    ) -> list[SymbolReconciliation]:
+        """Run the live event guard and fold its findings into the per-symbol results.
+
+        Reconcile is the catch-all for any fill that bypasses the user-stream
+        WebSocket path (REST-only sync, missed events, listenKey expiry,
+        crashed user-stream). Without this hook, a position whose protective
+        bracket failed at submit time can sit unprotected indefinitely as long
+        as the local-↔-exchange counts happen to match. See
+        ``docs/incidents/2026-04-26-bracket-reject-orphan-position.md``.
+
+        ``LiveEventGuard.inspect_all_active_positions`` already activates the
+        kill switch on its own; we still surface the findings here so the
+        reconciliation result reflects the halt and the standard mismatch
+        reporting picks them up.
+        """
+        guard_result = self._live_event_guard.inspect_all_active_positions()
+        if not guard_result.findings:
+            return symbol_results
+
+        findings_by_symbol: dict[str, list[str]] = {}
+        for finding in guard_result.findings:
+            parts = finding.split(":", 3)
+            symbol = parts[1] if len(parts) >= 2 else ""
+            findings_by_symbol.setdefault(symbol, []).append(finding)
+
+        merged: list[SymbolReconciliation] = []
+        seen: set[str] = set()
+        for sr in symbol_results:
+            extra = findings_by_symbol.pop(sr.symbol, [])
+            if extra:
+                merged.append(
+                    SymbolReconciliation(
+                        symbol=sr.symbol,
+                        status="mismatch",
+                        mismatches=[*sr.mismatches, *extra],
+                    )
+                )
+            else:
+                merged.append(sr)
+            seen.add(sr.symbol)
+
+        for symbol, extras in findings_by_symbol.items():
+            if symbol in seen:
+                continue
+            merged.append(SymbolReconciliation(symbol=symbol, status="mismatch", mismatches=extras))
+        return merged
 
     def _record_run(self, run_id: str, status: str, details: dict[str, object]) -> None:
         with get_db(self._db_path) as conn:

@@ -211,7 +211,13 @@ def test_mainnet_readiness_requires_gate6_authorization_name(
 
 
 def test_default_main_yaml_does_not_arm_mainnet() -> None:
-    """The committed default main.yaml must never leave mainnet armed."""
+    """The committed default main.yaml must never leave mainnet armed.
+
+    ``mode: live`` paired with ``environment: testnet`` is a legitimate
+    burn-in configuration; what we forbid is anything that could route real
+    funds — mainnet environment, ``allow_mainnet=true``, or an active
+    micro_live block.
+    """
     from pathlib import Path as _Path
 
     import yaml as _yaml
@@ -219,7 +225,7 @@ def test_default_main_yaml_does_not_arm_mainnet() -> None:
     main_yaml_path = _Path(__file__).resolve().parents[2] / "config" / "main.yaml"
     data = _yaml.safe_load(main_yaml_path.read_text())
 
-    assert data.get("mode") == "shadow"
+    assert data.get("mode") in {"shadow", "live"}
     live = data.get("live") or {}
     assert live.get("environment") == "testnet"
     assert live.get("allow_mainnet") is False

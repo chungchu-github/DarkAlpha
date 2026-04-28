@@ -55,3 +55,24 @@ fix, burn-in harness). Re-verified 2026-04-27.
 - **Bar**: three consecutive clean ≥24h burn-ins (spread over a week)
   before scheduling Gate 6 micro-live. Output goes to
   `docs/burn-in-<UTC-DATETIME>/report.md`.
+- **First attempt status**: `docs/burn-in-2026-04-26T164808Z/` is filed
+  as INVALID — see incident below. Counter remains at 0/3.
+
+## P0 — landed via this commit
+
+### `2026-04-26` Bracket-reject orphan position survives 24h burn-in
+
+- **Incident report**: `docs/incidents/2026-04-26-bracket-reject-orphan-position.md`
+- **Defect**: `LiveEventGuard` was wired only into the user-stream WebSocket
+  fill path. Any fill landing through REST polling / reconcile (user-stream
+  not yet connected, listenKey expired, missed event) bypassed the guard
+  entirely, leaving an unprotected position invisible to the safety chain
+  as long as local-↔-exchange counts agreed.
+- **Fix**: `LiveReconciler.run` now invokes
+  `LiveEventGuard.inspect_all_active_positions` after the per-symbol sync
+  loop. Findings fold into the per-symbol mismatches and trigger the
+  existing kill-switch activation path. Plus `scripts/burn-in.sh` refuses
+  to start with dirty operational state (open live positions or in-flight
+  orders).
+- **Out of scope intentionally**: broker routing was already fixed in
+  commit `1b44e72` (with regression test) and is not re-touched.

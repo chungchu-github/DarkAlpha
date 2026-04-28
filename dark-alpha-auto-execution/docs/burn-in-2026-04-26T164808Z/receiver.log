@@ -1,0 +1,40 @@
+INFO:     Started server process [90072]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8765 (Press CTRL+C to quit)
+2026-04-27 06:42:19 [debug    ] audit.logged                   decision=received event_type=signal_received reason= source=receiver
+2026-04-27 06:42:19 [debug    ] audit.logged                   decision=accept event_type=signal_accepted reason= source=receiver
+2026-04-27 06:42:19 [info     ] validator.reject               detail='6.11 < 7.00' event_id=a229583104e14a40be283ae7b10340dc reason=low_ranking_score
+2026-04-27 06:42:19 [debug    ] audit.logged                   decision=reject event_type=signal_rejected reason=validator:low_ranking_score source=strategy
+2026-04-27 06:42:19 [info     ] signal.received                direction=long event_id=a229583104e14a40be283ae7b10340dc latency_ms=41 ranking_score=6.109024668472736 regime=vol_breakout_card symbol=BTCUSDT-PERP
+INFO:     127.0.0.1:58022 - "POST /signal HTTP/1.1" 200 OK
+2026-04-27 22:56:39 [debug    ] audit.logged                   decision=received event_type=signal_received reason= source=receiver
+2026-04-27 22:56:39 [debug    ] audit.logged                   decision=accept event_type=signal_accepted reason= source=receiver
+2026-04-27 22:56:39 [info     ] strategy.ticket_created        direction=long event_id=e3b10179f08c447c95bc44f313538b87 gate=gate1 notional_usd=22910.072415 quantity=9.901 symbol=ETHUSDT-PERP ticket_id=01KQ7Q2GQFJJCTSVAJDNR9BXAH
+2026-04-27 22:56:42 [error    ] strategy.dispatch_failed       error=user_stream_unhealthy:no_heartbeat_in_last_90s event_id=e3b10179f08c447c95bc44f313538b87
+2026-04-27 22:56:42 [info     ] signal.received                direction=long event_id=e3b10179f08c447c95bc44f313538b87 latency_ms=2550 ranking_score=10.0 regime=fake_breakout_reversal symbol=ETHUSDT-PERP
+INFO:     127.0.0.1:59395 - "POST /signal HTTP/1.1" 200 OK
+2026-04-27 23:31:46 [debug    ] audit.logged                   decision=received event_type=signal_received reason= source=receiver
+2026-04-27 23:31:46 [debug    ] audit.logged                   decision=accept event_type=signal_accepted reason= source=receiver
+2026-04-27 23:31:46 [info     ] validator.reject               detail='6.68 < 7.00' event_id=8235e905a08f44cd8c1fc3c2f5d34978 reason=low_ranking_score
+2026-04-27 23:31:46 [debug    ] audit.logged                   decision=reject event_type=signal_rejected reason=validator:low_ranking_score source=strategy
+2026-04-27 23:31:46 [info     ] signal.received                direction=long event_id=8235e905a08f44cd8c1fc3c2f5d34978 latency_ms=23 ranking_score=6.6820116786223425 regime=vol_breakout_card symbol=BTCUSDT-PERP
+INFO:     127.0.0.1:61529 - "POST /signal HTTP/1.1" 200 OK
+2026-04-27 23:31:47 [debug    ] audit.logged                   decision=received event_type=signal_received reason= source=receiver
+2026-04-27 23:31:47 [debug    ] audit.logged                   decision=accept event_type=signal_accepted reason= source=receiver
+2026-04-27 23:31:47 [info     ] strategy.ticket_created        direction=long event_id=7d7b300608a24dfea4ac76b34cb10820 gate=gate1 notional_usd=8179.4944 quantity=3.584 symbol=ETHUSDT-PERP ticket_id=01KQ7S2VJAZZB8G173MZHNXM2R
+2026-04-27 23:31:50 [error    ] strategy.dispatch_failed       error=user_stream_unhealthy:no_heartbeat_in_last_90s event_id=7d7b300608a24dfea4ac76b34cb10820
+2026-04-27 23:31:50 [info     ] signal.received                direction=long event_id=7d7b300608a24dfea4ac76b34cb10820 latency_ms=2484 ranking_score=7.031361223861261 regime=vol_breakout_card symbol=ETHUSDT-PERP
+INFO:     127.0.0.1:61532 - "POST /signal HTTP/1.1" 200 OK
+2026-04-28 00:02:00 [debug    ] audit.logged                   decision=received event_type=signal_received reason= source=receiver
+2026-04-28 00:02:00 [debug    ] audit.logged                   decision=accept event_type=signal_accepted reason= source=receiver
+2026-04-28 00:02:00 [info     ] validator.reject               detail='6.18 < 7.00' event_id=e042d1d00a0648388f15a18cdcbfb49c reason=low_ranking_score
+2026-04-28 00:02:00 [debug    ] audit.logged                   decision=reject event_type=signal_rejected reason=validator:low_ranking_score source=strategy
+2026-04-28 00:02:00 [info     ] signal.received                direction=short event_id=e042d1d00a0648388f15a18cdcbfb49c latency_ms=20 ranking_score=6.178596253552151 regime=vol_breakout_card symbol=BTCUSDT-PERP
+INFO:     127.0.0.1:62466 - "POST /signal HTTP/1.1" 200 OK
+2026-04-28 00:02:02 [debug    ] audit.logged                   decision=received event_type=signal_received reason= source=receiver
+2026-04-28 00:02:02 [debug    ] audit.logged                   decision=accept event_type=signal_accepted reason= source=receiver
+2026-04-28 00:02:02 [info     ] validator.reject               detail='6.30 < 7.00' event_id=3beafa05a31647c28603c9e9ee4ba716 reason=low_ranking_score
+2026-04-28 00:02:02 [debug    ] audit.logged                   decision=reject event_type=signal_rejected reason=validator:low_ranking_score source=strategy
+2026-04-28 00:02:02 [info     ] signal.received                direction=short event_id=3beafa05a31647c28603c9e9ee4ba716 latency_ms=24 ranking_score=6.304737454218711 regime=vol_breakout_card symbol=ETHUSDT-PERP
+INFO:     127.0.0.1:62470 - "POST /signal HTTP/1.1" 200 OK
