@@ -1,4 +1,4 @@
-mode: shadow         # shadow | live — never flip to live without explicit Gate authorization
+mode: live         # shadow | live — never flip to live without explicit Gate authorization
 exchange: binance
 gate: 1
 
