@@ -13,6 +13,7 @@ build/
 # Data and logs (never commit live data)
 data/
 logs/
+docs/burn-in-*/
 
 # Coverage
 .coverage
