@@ -110,10 +110,16 @@ poetry run dark-alpha gate6 readiness --symbol BTCUSDT-PERP --recent-stream-minu
 
 GO requires all checks to be `ok`:
 
-- Gate 6.4 schema and recent user-stream fill event.
+- Gate 6.4 schema present. Recent fill events are reported but not
+  required to qualify — trade frequency is a strategy/market outcome,
+  not a safety signal. Stream uptime is evidenced by 6.5.
 - Gate 6.5 recent user-stream heartbeat and latest reconciliation `ok`.
-- Gate 6.6 no event-guard halt and no unprotected live position.
-- Gate 6.7 burn-in evidence present.
+- Gate 6.6 no event-guard halt **inside the burn-in window** and no
+  unprotected live position right now. Halts older than the window
+  (e.g. cleaned-up incidents) do not block readiness.
+- Gate 6.7 burn-in evidence — at least one `ok` reconciliation run
+  inside the window. Organic trade events are reported as bonus
+  evidence but not required.
 - Gate 6.8 kill switch clear.
 
 NO-GO actions:

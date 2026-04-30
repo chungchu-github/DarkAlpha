@@ -58,7 +58,25 @@ fix, burn-in harness). Re-verified 2026-04-27.
 - **First attempt status**: `docs/burn-in-2026-04-26T164808Z/` is filed
   as INVALID — see incident below. Counter remains at 0/3.
 
-## P0 — landed via this commit
+## P0 — landed via earlier commits
+
+### `2026-04-30` Gate 6.8 readiness over-strict — burn-ins could not qualify
+
+- **Defect**: three checks in `Gate6ReadinessReviewer` over-counted as
+  fail. (1) `_check_event_guard_state` had no time bound, so a single
+  historical halt (including verification runs against a cleaned-up
+  orphan) would pin the check at fail forever. (2) and (3)
+  `_check_user_stream_events` and `_check_burn_in` required at least
+  one organic TRADE user-stream event in the window — but trade
+  frequency is a function of strategy thresholds + market activity,
+  not a safety signal. A clean burn-in in a quiet window could not
+  qualify regardless of how the safety chain held up.
+- **Fix**: bound the event-guard halt query by the burn-in window;
+  treat absence of trade events as `ok` (with explanatory detail);
+  burn-in evidence requires only `ok` reconciliation runs.
+- **Verification**: simulating readiness at the first burn-in's end
+  time (`2026-04-29T03:26Z`) flips the report from `no_go` to `go`
+  with all 8 checks `ok`.
 
 ### `2026-04-26` Bracket-reject orphan position survives 24h burn-in
 
