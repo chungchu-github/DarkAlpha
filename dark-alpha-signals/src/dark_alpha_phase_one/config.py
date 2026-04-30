@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Mirror dark-alpha-auto-execution/src/bootstrap.py: package .env wins,
+# monorepo-root .env fills missing keys. This keeps shared secrets
+# (Telegram, Binance) in a single workspace-level .env so rotating a
+# token doesn't require updating two files.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+_WORKSPACE_ROOT = _PACKAGE_ROOT.parent
 
 
 @dataclass(frozen=True)
@@ -71,7 +79,8 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    load_dotenv()
+    load_dotenv(_PACKAGE_ROOT / ".env", override=False)
+    load_dotenv(_WORKSPACE_ROOT / ".env", override=False)
     symbols = os.getenv("SYMBOLS", "BTCUSDT,ETHUSDT")
 
     return Settings(

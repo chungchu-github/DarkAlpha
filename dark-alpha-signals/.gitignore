@@ -1,0 +1,26 @@
+# Secrets — package-level fallback. The canonical location for shared
+# secrets is the monorepo root /Users/darkagent001/DarkAlpha/.env;
+# config.py loads both with package wins. This rule guards against
+# accidentally committing a package-level override.
+.env
+.env.local
+.env.*.local
+
+# Runtime state — risk_engine writes daily PnL state every cycle, so
+# keeping it tracked produces a permanent dirty working tree and risks
+# committing live trading state into history.
+data/risk_state.json
+
+# Python build / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# Editors
+.vscode/
+.idea/
+.DS_Store
