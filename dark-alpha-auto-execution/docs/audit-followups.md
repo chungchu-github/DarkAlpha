@@ -62,6 +62,14 @@ fix, burn-in harness). Re-verified 2026-04-27.
   burn-in end time yields `go` and all operational signals (24/24
   kill switch clear, 24/24 reconcile ok, no live-event-guard halts
   inside the window) corroborate.
+- **Round 2/3** — counted. See
+  `docs/burn-in-2026-04-30T042100Z-addendum.md`. First burn-in to
+  pass with the post-`37fae07` readiness reviewer — frozen
+  `report.md` is `status: go` with all 8 checks `ok`. Notable: the
+  window included a real Binance `-2019 Margin is insufficient`
+  rejection at 04:21:38 UTC, which the broker handled with a
+  cancel-confirmed sweep and no orphan, demonstrating the
+  bracket-reject safety chain end-to-end on real exchange traffic.
 - **First aborted attempt** (`docs/burn-in-2026-04-26T164808Z/`) is
   filed as INVALID — see incident below. Did not count toward the
   three-round chain.
