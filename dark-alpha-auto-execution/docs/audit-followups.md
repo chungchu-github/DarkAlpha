@@ -76,9 +76,42 @@ fix, burn-in harness). Re-verified 2026-04-27.
   14 UTC to cover NY open + 16 UTC funding settlement so the chain
   spans both Asia/EU hand-off and US session liquidity.
 - **Three-clean threshold met.** Gate 6.7 burn-in evidence cleared.
-  Next phase: Gate 6 micro-live canary (operator authorization +
-  dashboard required first; dashboard plan at
-  `~/.claude/plans/lucky-foraging-karp.md`).
+
+### Gate 6 micro-live canary — pre-flight scaffolding shipped
+
+- **Dashboard V1** — commit `6af5343`. Localhost-only, read-only,
+  9 panels, vanilla polling. 5-min sustained smoke test (540
+  requests, 0 failures, 0 errors). Run via
+  `./scripts/run_dashboard.sh`. Runbook
+  `docs/dashboard-runbook.md`.
+- **Pre-canary soak test runbook** — `docs/dashboard-soak-test.md`.
+  Operator must complete a 1–2h soak before any mainnet money goes
+  live; the 5-min smoke test only catches obvious bugs, not slow
+  leaks.
+- **First canary launch checklist** — `docs/first-canary-checklist.md`.
+  Step-by-step T-60 / T-45 / T-30 / T-10 / T+0 / T+30 sequence with
+  hard-stop conditions.
+- **Authorization draft** — `docs/gate-6-authorization.md`
+  pre-filled with recommended caps (ETHUSDT-PERP, $10 notional,
+  1× leverage, $5 daily loss cap, 1 concurrent, 30-min window).
+  Placeholder timestamps + signature — operator fills, signs, and
+  commits before the canary.
+
+### Operator-only items (cannot delegate)
+
+- Generate dedicated mainnet API key (Read + Futures Trading,
+  withdrawal OFF, IP-restricted).
+- Add `BINANCE_FUTURES_MAINNET_API_KEY` /
+  `BINANCE_FUTURES_MAINNET_API_SECRET` to monorepo-root `.env`
+  (workspace-level only — both services read it via commit
+  `c908219`).
+- Fund the mainnet Futures wallet with ≥ 2× daily-loss cap +
+  1× max-notional (~$20 USDT for the recommended caps).
+- Choose actual exercise window (30 min in a quiet session you can
+  watch).
+- Run the 1–2h soak test.
+- Sign the authorization, commit, run the first canary per
+  `docs/first-canary-checklist.md`.
 - **First aborted attempt** (`docs/burn-in-2026-04-26T164808Z/`) is
   filed as INVALID — see incident below. Did not count toward the
   three-round chain.
