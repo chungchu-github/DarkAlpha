@@ -48,7 +48,7 @@ fix, burn-in harness). Re-verified 2026-04-27.
 
 ## Operational — burn-in evidence chain
 
-### Gate 6.7 burn-in chain — round 1/3 counted
+### Gate 6.7 burn-in chain — **3/3 COMPLETE**
 
 - **Harness**: `scripts/burn-in.sh` + `docs/burn-in-runbook.md`.
 - **Command**: `BURN_IN_HOURS=24 ./scripts/burn-in.sh --start-signals`
@@ -70,6 +70,15 @@ fix, burn-in harness). Re-verified 2026-04-27.
   rejection at 04:21:38 UTC, which the broker handled with a
   cancel-confirmed sweep and no orphan, demonstrating the
   bracket-reject safety chain end-to-end on real exchange traffic.
+- **Round 3/3** — counted. See
+  `docs/burn-in-2026-05-02T135921Z-addendum.md`. Frozen `report.md`
+  `status: go`, **zero `[error` lines** across all four logs. Started
+  14 UTC to cover NY open + 16 UTC funding settlement so the chain
+  spans both Asia/EU hand-off and US session liquidity.
+- **Three-clean threshold met.** Gate 6.7 burn-in evidence cleared.
+  Next phase: Gate 6 micro-live canary (operator authorization +
+  dashboard required first; dashboard plan at
+  `~/.claude/plans/lucky-foraging-karp.md`).
 - **First aborted attempt** (`docs/burn-in-2026-04-26T164808Z/`) is
   filed as INVALID — see incident below. Did not count toward the
   three-round chain.
