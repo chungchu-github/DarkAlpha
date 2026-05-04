@@ -10,8 +10,8 @@ live:
   micro_live:
     enabled: false             # flip true only inside an active Gate 6 exercise window
     allowed_symbols:
-      - BTCUSDT-PERP
-    max_notional_usd: 100
+      - ETHUSDT-PERP
+    max_notional_usd: 25       # ETHUSDT mainnet min_notional=20 + step_size buffer
     max_leverage: 1
     max_daily_loss_usd: 5
     max_concurrent_positions: 1

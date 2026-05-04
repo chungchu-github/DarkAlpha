@@ -1,6 +1,8 @@
 # Gate 6 Mainnet Micro-Live Runbook
 
-Status date: 2026-04-26
+Status date: 2026-05-04 (post-canary-1 update — defaults now reflect
+real ETHUSDT mainnet min_notional of 20 USDT discovered during the
+2026-05-04 canary)
 
 ## Verdict
 
@@ -25,7 +27,8 @@ live:
     enabled: true
     allowed_symbols:
       - ETHUSDT-PERP
-    max_notional_usd: 10
+    max_notional_usd: 25       # ETHUSDT mainnet min_notional = 20 USDT;
+                               # 25 leaves room for step_size=0.001 round-down
     max_leverage: 1
     max_daily_loss_usd: 5
     max_concurrent_positions: 1
@@ -43,7 +46,7 @@ You can generate the authorization file and matching config block with:
 ```bash
 poetry run dark-alpha gate6 authorize \
   --symbol ETHUSDT-PERP \
-  --max-notional-usd 10 \
+  --max-notional-usd 25 \
   --max-leverage 1 \
   --max-daily-loss-usd 5 \
   --window-start 2026-04-26T08:00:00+00:00 \
@@ -102,7 +105,9 @@ poetry run dark-alpha sync-live-orders --symbol ETHUSDT-PERP
 poetry run dark-alpha reconcile-live --symbol ETHUSDT-PERP
 ```
 
-7. At the end of the window, run the closeout command:
+7. At the end of the window, run the closeout command. The CLI accepts a
+   10-minute cleanup grace past `exercise_window_end`, so you have a
+   reasonable buffer to land this command after the window closes:
 
 ```bash
 poetry run dark-alpha gate6 closeout --symbol ETHUSDT-PERP --yes
@@ -110,6 +115,13 @@ poetry run dark-alpha gate6 closeout --symbol ETHUSDT-PERP --yes
 
 The closeout command performs cancel-all, reduce-only flatten, order sync,
 reconciliation, and writes a Markdown report under `reports/`.
+
+If you wait longer than 10 minutes past `exercise_window_end`, the CLI
+will refuse with `mainnet_outside_exercise_window` — the operator
+fallback in that case is to manually cancel via the Binance Futures UI
+and then `git checkout config/main.yaml` to revert to testnet. See
+`docs/incidents/2026-05-04-canary-1-closeout-window-gate.md` for the
+incident this grace was sized to handle.
 
 Manual equivalent:
 

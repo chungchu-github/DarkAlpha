@@ -32,7 +32,7 @@ fix, burn-in harness). Re-verified 2026-04-27.
   `_last_price()` unwinds before any persistence, leaving no orphan.
 - **Decision**: flow is already fail-clean. No change.
 
-## Open — P1 (must-fix before next canary)
+## Closed — P1 (resolved)
 
 ### `2026-05-04` `gate6 closeout` blocked by `mainnet_outside_exercise_window` after window end
 
@@ -42,27 +42,35 @@ fix, burn-in harness). Re-verified 2026-04-27.
   resting orders via Binance Futures UI within ~1 min of the window
   end. The CLI cleanup path (`gate6 closeout`) refused with
   `mainnet_outside_exercise_window`.
-- **Defect**: `_assert_in_exercise_window` (`src/execution/live_safety.py:213`)
-  is called from every `assert_live_mode_enabled` invocation, including
-  cleanup commands. The window-gate is correct for *opening* exposure
-  but wrong for *closing* it — closeout's reason for existing is to
-  flatten/cancel after the window ends.
-- **Recommended fix**: expand the window for cleanup paths to
-  `[start, end + grace_minutes]` (default ~5 min). Operator gets a
-  reasonable buffer to land the post-window closeout command without
-  re-arming any new-exposure path. For grace-window-exceeded cases
-  the fallback is the manual Binance UI procedure plus `git
-  checkout config/main.yaml` revert (already documented in the
-  incident).
-- **Blocks**: Canary 2 — must ship the fix before any further
-  mainnet exercise so closeout works from the CLI, generates
-  `reports/gate6-closeout-*.md`, and exercises the full
-  cancel-open-orders + flatten + sync + reconcile chain.
-- **Regression test required**: simulate `now > exercise_window_end`,
-  call `gate6_closeout`, assert it succeeds inside the grace window
-  and fails outside it. Bonus: assert `submit_gate6_canary` STILL
-  fails outside the window (the gate must remain strict for
-  new-exposure paths).
+- **Defect**: `_assert_in_exercise_window` (`src/execution/live_safety.py`)
+  was called from every `assert_live_mode_enabled` invocation, including
+  cleanup commands. The strict `[start, end]` gate was correct for
+  *opening* exposure but wrong for *closing* it — closeout's reason for
+  existing is to flatten/cancel after the window ends.
+- **Fix**: commit `07a4800` adds an opt-in `cleanup_grace_seconds`
+  keyword threaded through
+  `assert_live_mode_enabled → assert_live_preflight →
+  assert_mainnet_readiness → _assert_in_exercise_window`. Default 0.0
+  preserves strict semantics. Cleanup callers (`run_gate6_closeout`,
+  `repair_local_flat_after_closeout`, `cancel-open-orders`,
+  `reconcile-live`, `sync-live-orders`) opt in with
+  `CLEANUP_WINDOW_GRACE_SECONDS = 600.0` (10 min). New-exposure
+  callers (`submit_gate6_canary`, `Gate6Preflight`,
+  `user-stream listen`, `gate2-test --submit`) stay strict. Grace
+  only extends `end`; pre-window cleanup attempts still raise.
+- **Verification**: 7 new regression tests in `test_live_safety.py`
+  covering strict default, grace admit, past-grace block, no-extend-
+  start, full chain wiring, and middle-rung wiring. 414/414 unit
+  tests pass.
+- **Operator runbook updated**: `docs/gate-6-micro-live-runbook.md`
+  and `docs/first-canary-checklist.md` now state the 10-min grace
+  and the manual-Binance-UI fallback for grace-exceeded cases.
+- **Defaults updated** for next canary: `config/main.yaml`,
+  `docs/gate-6-micro-live-runbook.md`, and
+  `docs/first-canary-checklist.md` now ship ETHUSDT-PERP /
+  $25 max_notional / $5 daily-loss as the recommended caps,
+  reflecting the discovered ETHUSDT mainnet `min_notional = 20`
+  plus headroom for `step_size = 0.001` round-down.
 
 ## Open — non-blocking
 

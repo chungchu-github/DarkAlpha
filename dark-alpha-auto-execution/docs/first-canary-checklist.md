@@ -27,7 +27,7 @@ uncertainty.
       services already read the workspace .env (commit `c908219`).
 - [ ] Mainnet account funded with **at least 2× the daily-loss cap +
       1× max-notional**. With the recommended caps below
-      (notional $10, daily loss $5, leverage 1x) that's ~$20 USDT
+      (notional $25, daily loss $5, leverage 1×) that is **$35 USDT**
       sitting in the Futures wallet — pure ETH or USDT, your call.
 
 ## Recommended starting parameters
@@ -39,14 +39,15 @@ once you have empirical confidence.
 
 | Parameter | Recommended | Why |
 |---|---|---|
-| Symbol | `ETHUSDT-PERP` | Lower min-notional than BTC (~$5 vs ~$100), so the absolute exposure is genuinely micro. Liquid enough for clean fills. |
+| Symbol | `ETHUSDT-PERP` | Mainnet min-notional 20 USDT (vs BTCUSDT 50 USDT) — keeps the per-order capital genuinely micro while still passing the exchange filter. Liquid enough for clean fills. |
 | Direction | `long` only | One direction = one less variable. Switch to `both` after 2+ successful canaries. |
-| Max notional / order USDT | `10` | Above Binance min-notional, well below any meaningful financial impact. |
+| Max notional / order USDT | `25` | Above ETHUSDT mainnet min_notional (20 USDT) with headroom for step_size 0.001 round-down. Well below any meaningful financial impact. |
 | Max leverage | `1` | No leverage — full exposure to mark moves only, no liquidation cascade risk. |
-| Max daily loss USDT | `5` | Half the per-order notional. ~5 stop-outs at 1% before the breaker fires. |
+| Max daily loss USDT | `5` | ~20 stop-outs of headroom at 1% (`$25 × 1% = $0.25 per stop`) before the breaker fires. |
 | Max concurrent positions | `1` | Don't multiply exposure during a debug exercise. |
 | Exercise window | 30 minutes | Long enough to fully exercise dispatch → fill → close-out flow. Short enough to bound exposure if anything misbehaves. |
-| Exercise window timing | a quiet 30-min slot when **you can sit and watch the dashboard** | Not overnight, not during news, not during funding settlement. Sunday 02–06 UTC is generally quiet. |
+| Exercise window timing | a quiet 30-min slot when **you can sit and watch the dashboard** | Not overnight, not during news, not during funding settlement. Sunday 02–06 UTC is generally quiet; Sun→Mon UTC handover (00–06 UTC Monday) also works. |
+| Closeout buffer | the CLI accepts a 10-min grace past `exercise_window_end` | If you have not run `gate6 closeout` within 10 min of window end, the CLI refuses and operator must manually cancel via Binance UI. Plan to land closeout within 1–2 min of window end. |
 
 These are operational risk caps, not investment guidance — operator
 decides their own risk tolerance. The values above reflect the
@@ -80,7 +81,7 @@ committed config:
 
 ```bash
 git add docs/gate-6-authorization.md
-git commit -m "auth: gate 6 canary 1 — ETH/USDT 10 notional / 5 USDT daily cap / 30min window"
+git commit -m "auth: gate 6 canary 1 — ETH/USDT 25 notional / 5 USDT daily cap / 30min window"
 git push
 ```
 
@@ -97,7 +98,7 @@ live:
     enabled: true
     allowed_symbols:
       - ETHUSDT-PERP
-    max_notional_usd: 10
+    max_notional_usd: 25
     max_leverage: 1
     max_daily_loss_usd: 5
     max_concurrent_positions: 1
