@@ -11,9 +11,10 @@ uncertainty.
       shows three counted rounds.
 - [x] Dashboard V1 deployed locally — `./scripts/run_dashboard.sh`
       runs cleanly.
-- [ ] **Dashboard 1–2h soak test passed** — see
-      `docs/dashboard-soak-test.md`. Record run timestamp + RSS / FD
-      deltas in this file under §Notes once done.
+- [x] **Dashboard 1–2h soak test passed** — `2026-05-03T14:57:38Z`
+      (2h). RSS −6% vs baseline; FDs −7% vs baseline; 9/9 endpoints
+      ✓ across 5 check-ins; 0 halts; 4/4 reconcile ok. Full results
+      in `docs/dashboard-soak-2026-05-03T145738Z-addendum.md`.
 - [ ] **Dedicated mainnet API key created** in Binance:
       - Permission: **Read + Futures Trading only**. Withdrawal **OFF**.
       - IP whitelist: your home/office IP (and only that).
