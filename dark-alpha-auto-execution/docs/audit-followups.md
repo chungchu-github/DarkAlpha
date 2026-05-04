@@ -32,6 +32,38 @@ fix, burn-in harness). Re-verified 2026-04-27.
   `_last_price()` unwinds before any persistence, leaving no orphan.
 - **Decision**: flow is already fail-clean. No change.
 
+## Open — P1 (must-fix before next canary)
+
+### `2026-05-04` `gate6 closeout` blocked by `mainnet_outside_exercise_window` after window end
+
+- **Incident**: `docs/incidents/2026-05-04-canary-1-closeout-window-gate.md`
+- **Surface**: Gate 6 first canary (2026-05-04T04:30-05:00 UTC) closed
+  out cleanly only because the operator manually cancelled three
+  resting orders via Binance Futures UI within ~1 min of the window
+  end. The CLI cleanup path (`gate6 closeout`) refused with
+  `mainnet_outside_exercise_window`.
+- **Defect**: `_assert_in_exercise_window` (`src/execution/live_safety.py:213`)
+  is called from every `assert_live_mode_enabled` invocation, including
+  cleanup commands. The window-gate is correct for *opening* exposure
+  but wrong for *closing* it — closeout's reason for existing is to
+  flatten/cancel after the window ends.
+- **Recommended fix**: expand the window for cleanup paths to
+  `[start, end + grace_minutes]` (default ~5 min). Operator gets a
+  reasonable buffer to land the post-window closeout command without
+  re-arming any new-exposure path. For grace-window-exceeded cases
+  the fallback is the manual Binance UI procedure plus `git
+  checkout config/main.yaml` revert (already documented in the
+  incident).
+- **Blocks**: Canary 2 — must ship the fix before any further
+  mainnet exercise so closeout works from the CLI, generates
+  `reports/gate6-closeout-*.md`, and exercises the full
+  cancel-open-orders + flatten + sync + reconcile chain.
+- **Regression test required**: simulate `now > exercise_window_end`,
+  call `gate6_closeout`, assert it succeeds inside the grace window
+  and fails outside it. Bonus: assert `submit_gate6_canary` STILL
+  fails outside the window (the gate must remain strict for
+  new-exposure paths).
+
 ## Open — non-blocking
 
 ### mypy baseline (~30 errors)
