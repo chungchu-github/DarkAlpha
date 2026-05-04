@@ -8,7 +8,7 @@
 > commit. See `docs/first-canary-checklist.md` for the launch
 > sequence.
 
-- Generated at UTC: `<FILL ON CANARY DAY — e.g. 2026-05-04T03:00:00Z>`
+- Generated at UTC: `2026-05-04T03:40:00Z`
 - Operator: `darkagent001`
 
 ## Operator Limits
@@ -20,22 +20,22 @@
 - Max leverage: `1`
 - Max concurrent positions: `1`
 - Max daily loss USDT: `5`
-- Exercise window start UTC: `<FILL — chosen 30-min slot>`
-- Exercise window end UTC: `<FILL — start + 30 minutes>`
+- Exercise window start UTC: `2026-05-04T04:00:00Z`
+- Exercise window end UTC: `2026-05-04T04:30:00Z`
 - Auto cancel-all after window: `yes`
 - Auto flatten after window: `yes`
 
 ## Safety Acknowledgement
 
-- [ ] Mainnet key is dedicated to this bot.
-- [ ] Mainnet key has no withdrawal permission.
-- [ ] Mainnet key is IP restricted when possible.
-- [ ] `poetry run dark-alpha gate-check all` passed immediately before the run.
-- [ ] Binance account has no unknown open orders.
-- [ ] Binance account has no unknown position.
-- [ ] Every live ticket must include stop loss and take profit.
-- [ ] Operator accepts that this is a micro-live canary, not production live trading.
-- [ ] Dashboard 1–2h soak test passed (see `docs/dashboard-soak-test.md`).
+- [x] Mainnet key is dedicated to this bot.
+- [x] Mainnet key has no withdrawal permission.
+- [x] Mainnet key is IP restricted when possible.
+- [x] `poetry run dark-alpha gate-check all` passed immediately before the run.
+- [x] Binance account has no unknown open orders.
+- [x] Binance account has no unknown position.
+- [x] Every live ticket must include stop loss and take profit.
+- [x] Operator accepts that this is a micro-live canary, not production live trading.
+- [x] Dashboard 1–2h soak test passed (see `docs/dashboard-soak-test.md`).
 
 ## Matching `config/main.yaml` Block
 
@@ -61,8 +61,8 @@ live:
     max_concurrent_positions: 1
     require_stop_loss: true
     require_take_profit: true
-    exercise_window_start: "<FILL>"
-    exercise_window_end:   "<FILL>"
+    exercise_window_start: "2026-05-04T04:00:00Z"
+    exercise_window_end:   "2026-05-04T04:30:00Z"
     auto_cancel_flatten_after: true
 ```
 
@@ -86,6 +86,6 @@ authorization commit.
 
 ## Signature
 
-- Operator: `<FILL on canary day>`
-- Date: `<FILL on canary day>`
-- Notes: `<FILL — soak test result, any pre-canary observations>`
+- Operator: `darkagent001`
+- Date: `2026-05-04`
+- Notes: `Dashboard 2h soak 2026-05-03T14:57:38Z PASS (commit 5f2f7e4); 3/3 burn-in chain met (9c76eec). 04:00-04:30 UTC = Sun→Mon handover quiet slot.`
