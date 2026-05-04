@@ -87,7 +87,22 @@ class BinanceExchangeInfoClient:
         symbols = payload.get("symbols") if isinstance(payload, dict) else None
         if not symbols:
             raise ExchangeFilterError(f"binance_exchange_info_missing_symbol:{symbol}")
-        return parse_symbol_filters(symbols[0])
+        # Binance Futures /fapi/v1/exchangeInfo SILENTLY IGNORES the
+        # ``?symbol=`` query parameter and returns the full listing
+        # (~700 symbols on mainnet). On testnet only a handful exist
+        # with BTCUSDT typically first, so the previous ``symbols[0]``
+        # lookup masqueraded as correct; on mainnet it served BTCUSDT's
+        # filter for any non-BTCUSDT request — see Gate 6 first canary
+        # incident 2026-05-04 where this was caught fail-closed by
+        # ``assert_min_notional``. Always pick the requested symbol
+        # explicitly.
+        matching = next(
+            (entry for entry in symbols if str(entry.get("symbol")) == symbol),
+            None,
+        )
+        if matching is None:
+            raise ExchangeFilterError(f"binance_exchange_info_missing_symbol:{symbol}")
+        return parse_symbol_filters(matching)
 
 
 class StaticExchangeFilterProvider:
