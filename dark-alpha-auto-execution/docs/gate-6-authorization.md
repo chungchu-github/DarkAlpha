@@ -8,7 +8,7 @@
 > commit. See `docs/first-canary-checklist.md` for the launch
 > sequence.
 
-- Generated at UTC: `2026-05-04T03:40:00Z`
+- Generated at UTC: `2026-05-04T04:25:00Z`
 - Operator: `darkagent001`
 
 ## Operator Limits
@@ -16,12 +16,12 @@
 - Authorized symbol: `ETHUSDT-PERP`
 - Direction allowed: `long`
 - Strategy allowed: `manual_test_signal` (Gate 6 canary submission only — automated signals service stays off for first canary)
-- Max notional per order USDT: `10`
+- Max notional per order USDT: `25`
 - Max leverage: `1`
 - Max concurrent positions: `1`
 - Max daily loss USDT: `5`
-- Exercise window start UTC: `2026-05-04T04:00:00Z`
-- Exercise window end UTC: `2026-05-04T04:30:00Z`
+- Exercise window start UTC: `2026-05-04T04:30:00Z`
+- Exercise window end UTC: `2026-05-04T05:00:00Z`
 - Auto cancel-all after window: `yes`
 - Auto flatten after window: `yes`
 
@@ -55,14 +55,14 @@ live:
     enabled: true
     allowed_symbols:
       - ETHUSDT-PERP
-    max_notional_usd: 10
+    max_notional_usd: 25
     max_leverage: 1
     max_daily_loss_usd: 5
     max_concurrent_positions: 1
     require_stop_loss: true
     require_take_profit: true
-    exercise_window_start: "2026-05-04T04:00:00Z"
-    exercise_window_end:   "2026-05-04T04:30:00Z"
+    exercise_window_start: "2026-05-04T04:30:00Z"
+    exercise_window_end:   "2026-05-04T05:00:00Z"
     auto_cancel_flatten_after: true
 ```
 
@@ -88,4 +88,4 @@ authorization commit.
 
 - Operator: `darkagent001`
 - Date: `2026-05-04`
-- Notes: `Dashboard 2h soak 2026-05-03T14:57:38Z PASS (commit 5f2f7e4); 3/3 burn-in chain met (9c76eec). 04:00-04:30 UTC = Sun→Mon handover quiet slot.`
+- Notes: `Canary 1 (04:00-04:30 UTC) aborted fail-closed by symbol-filter min_notional check (commit a16eb66 fixed _fetch_symbol_filters BTCUSDT-leak bug). Discovered real ETHUSDT mainnet min_notional=20, bumped max_notional 10→25 with step_size 0.001 buffer. Retry window 04:30-05:00 UTC same Sun→Mon UTC handover quiet slot.`
