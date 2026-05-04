@@ -1,10 +1,12 @@
 """Tests for live execution safety primitives."""
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from execution.live_safety import (
+    CLEANUP_WINDOW_GRACE_SECONDS,
     LiveExecutionConfig,
     LivePreflightError,
     LivePreOrderHealthError,
@@ -920,3 +922,155 @@ def test_pre_order_health_gate_skips_account_check_when_no_client(
         user_stream_active=True,
         account_client=None,
     )
+
+
+# --------------------------------------------------------------------------
+# Cleanup window grace — regression for Bug 3 of canary 1 (2026-05-04).
+#
+# ``_assert_in_exercise_window`` is reached by every ``assert_live_mode_enabled``
+# caller. Pre-fix the strict ``[start, end]`` gate blocked even *cleanup*
+# paths (gate6 closeout, cancel-open-orders, reconcile-live, sync-live-orders,
+# repair-flat) once ``now > exercise_window_end``, so the canary 1 closeout
+# at T+30 was refused with ``mainnet_outside_exercise_window``. Post-fix
+# cleanup callers pass ``cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS``
+# (10 min) which extends the upper bound only. New-exposure paths
+# (submit-canary, user-stream listen) keep the strict semantics — these
+# tests pin both halves.
+# --------------------------------------------------------------------------
+
+
+def _mainnet_cfg_with_window(*, start: datetime, end: datetime) -> LiveExecutionConfig:
+    return LiveExecutionConfig(
+        mode="live",
+        environment="mainnet",
+        allow_mainnet=True,
+        require_gate_authorization=False,
+        gate_authorization_file="docs/gate-6-authorization.md",
+        micro_live={
+            "enabled": True,
+            "allowed_symbols": ["ETHUSDT-PERP"],
+            "max_notional_usd": 25,
+            "max_leverage": 1,
+            "max_daily_loss_usd": 5,
+            "max_concurrent_positions": 1,
+            "exercise_window_start": start.isoformat(),
+            "exercise_window_end": end.isoformat(),
+        },
+    )
+
+
+def test_cleanup_grace_constant_is_ten_minutes() -> None:
+    """If anyone bumps the constant, it should be a deliberate decision —
+    failing this test forces them to update operator runbooks too."""
+    assert CLEANUP_WINDOW_GRACE_SECONDS == 600.0
+
+
+def test_window_strict_blocks_just_after_window_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (cleanup_grace_seconds=0) must keep the strict semantics:
+    even one minute past ``exercise_window_end`` raises. This is the
+    pre-existing behaviour and exists to ensure the new keyword arg
+    didn't accidentally change defaults."""
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_SECRET", "secret")
+    now = datetime.now(tz=UTC)
+    cfg = _mainnet_cfg_with_window(
+        start=now - timedelta(hours=1),
+        end=now - timedelta(minutes=1),
+    )
+    with pytest.raises(LivePreflightError, match="mainnet_outside_exercise_window"):
+        assert_mainnet_readiness(cfg)
+
+
+def test_window_grace_admits_just_after_window_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With cleanup grace 10 min, calling 5 min after window end must pass
+    — this is exactly the canary 1 scenario where closeout was wrongly
+    blocked at T+30 + ~1 minute."""
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_SECRET", "secret")
+    now = datetime.now(tz=UTC)
+    cfg = _mainnet_cfg_with_window(
+        start=now - timedelta(hours=1),
+        end=now - timedelta(minutes=5),
+    )
+    # Should not raise.
+    assert_mainnet_readiness(cfg, cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
+
+
+def test_window_grace_blocks_past_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grace is bounded — 20 min after window end (well past 10-min
+    grace) must still raise. Operator who waits this long should re-issue
+    authorization rather than rely on the grace."""
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_SECRET", "secret")
+    now = datetime.now(tz=UTC)
+    cfg = _mainnet_cfg_with_window(
+        start=now - timedelta(hours=1),
+        end=now - timedelta(minutes=20),
+    )
+    with pytest.raises(LivePreflightError, match="mainnet_outside_exercise_window"):
+        assert_mainnet_readiness(cfg, cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
+
+
+def test_window_grace_does_not_extend_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grace MUST NOT relax the lower bound: cleanup paths called
+    *before* the window opens still raise. There is no authorization yet
+    and nothing to clean up."""
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_SECRET", "secret")
+    now = datetime.now(tz=UTC)
+    cfg = _mainnet_cfg_with_window(
+        start=now + timedelta(hours=1),
+        end=now + timedelta(hours=2),
+    )
+    with pytest.raises(LivePreflightError, match="mainnet_outside_exercise_window"):
+        assert_mainnet_readiness(cfg, cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
+
+
+def test_assert_live_mode_enabled_threads_grace_through_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: cleanup callers go through ``assert_live_mode_enabled``,
+    which forwards into ``assert_live_preflight`` →
+    ``assert_mainnet_readiness`` → ``_assert_in_exercise_window``. Pin the
+    full chain so a future refactor that drops the kwarg in any rung
+    fails this test."""
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_SECRET", "secret")
+    now = datetime.now(tz=UTC)
+    cfg = _mainnet_cfg_with_window(
+        start=now - timedelta(hours=1),
+        end=now - timedelta(minutes=5),
+    )
+    # Strict default still blocks (regression guard).
+    with pytest.raises(LivePreflightError, match="mainnet_outside_exercise_window"):
+        assert_live_mode_enabled(cfg)
+    # Grace-enabled call passes.
+    assert_live_mode_enabled(cfg, cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
+
+
+def test_assert_live_preflight_threads_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``assert_live_preflight`` must thread the grace through to mainnet
+    readiness. This is the rung in the chain easiest to forget if someone
+    refactors only the top or bottom."""
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_FUTURES_MAINNET_API_SECRET", "secret")
+    now = datetime.now(tz=UTC)
+    cfg = _mainnet_cfg_with_window(
+        start=now - timedelta(hours=1),
+        end=now - timedelta(minutes=3),
+    )
+    # Strict default raises.
+    with pytest.raises(LivePreflightError, match="mainnet_outside_exercise_window"):
+        assert_live_preflight(cfg)
+    # Grace passes.
+    assert_live_preflight(cfg, cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)

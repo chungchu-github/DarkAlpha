@@ -26,6 +26,7 @@ from .exchange_filters import BinanceExchangeInfoClient, ExchangeFilterProvider
 from .live_order_sync import LiveOrderStatusSync, OrderSyncResult
 from .live_reconciliation import LiveReconciler, ReconciliationResult
 from .live_safety import (
+    CLEANUP_WINDOW_GRACE_SECONDS,
     LiveExecutionConfig,
     LivePreflightError,
     assert_live_mode_enabled,
@@ -190,7 +191,11 @@ def run_gate6_closeout(
 ) -> Gate6CloseoutResult:
     if not yes:
         raise Gate6Error("gate6_closeout_requires_yes")
-    assert_live_mode_enabled()
+    # Cleanup path: grant cleanup grace so the post-window
+    # cancel/flatten/sync/reconcile chain can run shortly after
+    # exercise_window_end without re-authorization. See incident
+    # docs/incidents/2026-05-04-canary-1-closeout-window-gate.md.
+    assert_live_mode_enabled(cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
     config = load_live_execution_config()
     if config.environment != "mainnet":
         raise LivePreflightError("gate6_closeout_requires_mainnet")
@@ -240,7 +245,10 @@ def repair_local_flat_after_closeout(
     if not yes:
         raise Gate6Error("gate6_repair_requires_yes")
     config = load_live_execution_config()
-    assert_live_mode_enabled(config)
+    # Cleanup path: same grace as closeout. ``repair-flat`` only marks local
+    # state as closed *after* the exchange has been verified flat, so it is
+    # safe to run inside the cleanup grace window.
+    assert_live_mode_enabled(config, cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
     if config.environment != "mainnet":
         raise LivePreflightError("gate6_repair_requires_mainnet")
 

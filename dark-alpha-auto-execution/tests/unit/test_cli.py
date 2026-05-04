@@ -152,7 +152,7 @@ def test_reconcile_live_prints_ok(runner: CliRunner, monkeypatch: pytest.MonkeyP
     import execution.live_reconciliation as recon
     import execution.live_safety as safety
 
-    monkeypatch.setattr(safety, "assert_live_mode_enabled", lambda: None)
+    monkeypatch.setattr(safety, "assert_live_mode_enabled", lambda *a, **kw: None)
 
     class FakeReconciler:
         def run(self, symbols: list[str]) -> object:
@@ -177,7 +177,7 @@ def test_reconcile_live_exits_nonzero_on_mismatch(
     import execution.live_reconciliation as recon
     import execution.live_safety as safety
 
-    monkeypatch.setattr(safety, "assert_live_mode_enabled", lambda: None)
+    monkeypatch.setattr(safety, "assert_live_mode_enabled", lambda *a, **kw: None)
 
     class FakeReconciler:
         def run_for_local_symbols(self) -> object:
@@ -195,7 +195,7 @@ def test_sync_live_orders_prints_status(runner: CliRunner, monkeypatch: pytest.M
     import execution.live_order_sync as sync_mod
     import execution.live_safety as safety
 
-    monkeypatch.setattr(safety, "assert_live_mode_enabled", lambda: None)
+    monkeypatch.setattr(safety, "assert_live_mode_enabled", lambda *a, **kw: None)
 
     class FakeSync:
         def sync_all(self) -> list[object]:

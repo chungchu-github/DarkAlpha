@@ -18,6 +18,27 @@ from storage.db import get_db
 from strategy.config import main_config, risk_gate_config
 from strategy.schemas import ExecutionTicket, PlannedOrder
 
+CLEANUP_WINDOW_GRACE_SECONDS: float = 600.0
+"""How long after ``exercise_window_end`` the *cleanup* paths stay authorized.
+
+Cleanup paths are ``gate6 closeout``, ``repair_local_flat_after_closeout``,
+``cancel-open-orders``, ``reconcile-live``, and ``sync-live-orders``. They
+exist to flatten / cancel / verify *after* the window has closed, so a
+strict ``now <= exercise_window_end`` gate would prevent the operator from
+landing the post-window cleanup at all (see incident
+``docs/incidents/2026-05-04-canary-1-closeout-window-gate.md``).
+
+The grace ONLY extends the upper bound for paths that explicitly opt in via
+``cleanup_grace_seconds`` on ``assert_live_mode_enabled`` and friends. It
+does NOT extend the start of the window, and NEW-EXPOSURE paths
+(``submit_gate6_canary``, ``user-stream listen``, ``gate2-test --submit``,
+``Gate6Preflight``) keep the strict ``[start, end]`` semantics.
+
+10 minutes balances "operator who is paying attention can land closeout"
+against "abandoned cleanup must force re-authorization rather than drift
+indefinitely."
+"""
+
 
 class LivePreflightError(RuntimeError):
     """Raised when live-mode safety requirements are not met."""
@@ -86,7 +107,11 @@ def load_live_execution_config() -> LiveExecutionConfig:
     )
 
 
-def assert_live_preflight(config: LiveExecutionConfig | None = None) -> None:
+def assert_live_preflight(
+    config: LiveExecutionConfig | None = None,
+    *,
+    cleanup_grace_seconds: float = 0.0,
+) -> None:
     config = config or load_live_execution_config()
     if config.mode != "live":
         return
@@ -97,20 +122,34 @@ def assert_live_preflight(config: LiveExecutionConfig | None = None) -> None:
     if config.require_gate_authorization and not Path(config.gate_authorization_file).exists():
         raise LivePreflightError("gate_authorization_missing")
     if config.environment == "mainnet":
-        assert_mainnet_readiness(config)
+        assert_mainnet_readiness(config, cleanup_grace_seconds=cleanup_grace_seconds)
 
 
-def assert_live_mode_enabled(config: LiveExecutionConfig | None = None) -> None:
+def assert_live_mode_enabled(
+    config: LiveExecutionConfig | None = None,
+    *,
+    cleanup_grace_seconds: float = 0.0,
+) -> None:
+    """Gate any live operation against mode/env/authorization/window state.
+
+    ``cleanup_grace_seconds`` is forwarded to the exercise-window check.
+    Default 0.0 keeps the historical strict ``[start, end]`` semantics. Pass
+    ``CLEANUP_WINDOW_GRACE_SECONDS`` from cleanup-only paths so the operator
+    can land closeout / cancel / sync / reconcile shortly after the window
+    closes; new-exposure paths (submit-canary, user-stream, etc.) leave it
+    at zero so a stale authorization cannot resurrect them.
+    """
     config = config or load_live_execution_config()
     if config.mode != "live":
         raise LivePreflightError("live_ticket_while_global_mode_is_not_live")
-    assert_live_preflight(config)
+    assert_live_preflight(config, cleanup_grace_seconds=cleanup_grace_seconds)
 
 
 def assert_mainnet_readiness(
     config: LiveExecutionConfig | None = None,
     *,
     require_credentials: bool = True,
+    cleanup_grace_seconds: float = 0.0,
 ) -> None:
     """Fail closed unless mainnet has explicit micro-live limits.
 
@@ -142,7 +181,7 @@ def assert_mainnet_readiness(
         raise LivePreflightError("mainnet_daily_loss_cap_missing")
     if int(micro.get("max_concurrent_positions", 0) or 0) != 1:
         raise LivePreflightError("mainnet_max_concurrent_positions_must_be_1")
-    _assert_in_exercise_window(micro)
+    _assert_in_exercise_window(micro, cleanup_grace_seconds=cleanup_grace_seconds)
 
 
 def assert_micro_live_ticket(
@@ -209,13 +248,23 @@ def _positive_float(value: Any) -> float:
         return 0.0
 
 
-def _assert_in_exercise_window(micro: dict[str, object]) -> None:
+def _assert_in_exercise_window(
+    micro: dict[str, object],
+    *,
+    cleanup_grace_seconds: float = 0.0,
+) -> None:
     start_raw = str(micro.get("exercise_window_start") or "")
     end_raw = str(micro.get("exercise_window_end") or "")
     if not start_raw or not end_raw:
         raise LivePreflightError("mainnet_exercise_window_missing")
     start = _parse_dt(start_raw)
     end = _parse_dt(end_raw)
+    # Cleanup paths get a small grace past ``end`` so the operator can land
+    # post-window cancel/flatten/reconcile without re-authorizing. Grace
+    # never extends ``start``: pre-window operations stay strictly blocked
+    # because no authorization has begun yet.
+    if cleanup_grace_seconds > 0:
+        end = end + timedelta(seconds=cleanup_grace_seconds)
     now = datetime.now(tz=UTC)
     if not (start <= now <= end):
         raise LivePreflightError("mainnet_outside_exercise_window")

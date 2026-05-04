@@ -185,7 +185,7 @@ def test_gate6_closeout_writes_report(tmp_path: Path, monkeypatch: pytest.Monkey
     from execution import gate6 as gate6_mod
 
     monkeypatch.setattr(gate6_mod, "load_live_execution_config", _mainnet_config)
-    monkeypatch.setattr(gate6_mod, "assert_live_mode_enabled", lambda: None)
+    monkeypatch.setattr(gate6_mod, "assert_live_mode_enabled", lambda *a, **kw: None)
 
     result = run_gate6_closeout(
         "ETHUSDT-PERP",

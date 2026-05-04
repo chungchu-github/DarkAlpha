@@ -128,6 +128,7 @@ def cancel_open_orders(symbol: str, yes: bool) -> None:
     """Cancel all open orders for one symbol on the configured Binance Futures environment."""
     from execution.binance_testnet_broker import BinanceFuturesBroker, LiveBrokerError
     from execution.live_safety import (
+        CLEANUP_WINDOW_GRACE_SECONDS,
         LivePreflightError,
         assert_live_mode_enabled,
         load_live_execution_config,
@@ -137,7 +138,8 @@ def cancel_open_orders(symbol: str, yes: bool) -> None:
     if not yes:
         click.confirm(f"Cancel all {env.upper()} open orders for {symbol}?", abort=True)
     try:
-        assert_live_mode_enabled()
+        # Cleanup path: cleanup grace authorizes post-window cancel.
+        assert_live_mode_enabled(cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
         result = BinanceFuturesBroker().cancel_all_open_orders(symbol)
     except (LiveBrokerError, LivePreflightError) as exc:
         click.echo(f"✗ cancel-open-orders blocked: {exc}", err=True)
@@ -150,10 +152,16 @@ def cancel_open_orders(symbol: str, yes: bool) -> None:
 def reconcile_live(symbols: tuple[str, ...]) -> None:
     """Run Gate 2 live/testnet reconciliation and halt on mismatch."""
     from execution.live_reconciliation import LiveReconciler
-    from execution.live_safety import LivePreflightError, assert_live_mode_enabled
+    from execution.live_safety import (
+        CLEANUP_WINDOW_GRACE_SECONDS,
+        LivePreflightError,
+        assert_live_mode_enabled,
+    )
 
     try:
-        assert_live_mode_enabled()
+        # Verification path: cleanup grace lets the operator run reconcile
+        # immediately after closeout to confirm the exchange is flat.
+        assert_live_mode_enabled(cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
         reconciler = LiveReconciler()
         result = reconciler.run(list(symbols)) if symbols else reconciler.run_for_local_symbols()
     except LivePreflightError as exc:
@@ -180,10 +188,16 @@ def reconcile_live(symbols: tuple[str, ...]) -> None:
 def sync_live_orders(symbol: str | None) -> None:
     """Poll Binance testnet order status and update local live positions."""
     from execution.live_order_sync import LiveOrderStatusSync
-    from execution.live_safety import LivePreflightError, assert_live_mode_enabled
+    from execution.live_safety import (
+        CLEANUP_WINDOW_GRACE_SECONDS,
+        LivePreflightError,
+        assert_live_mode_enabled,
+    )
 
     try:
-        assert_live_mode_enabled()
+        # Cleanup path: cleanup grace covers post-window REST sync of any
+        # straggler order state.
+        assert_live_mode_enabled(cleanup_grace_seconds=CLEANUP_WINDOW_GRACE_SECONDS)
         sync = LiveOrderStatusSync()
         results = sync.sync_symbol(symbol) if symbol else sync.sync_all()
     except LivePreflightError as exc:
