@@ -425,6 +425,7 @@ async def run_user_stream(
     client: BinanceUserStreamClient | None = None,
     ingestor: LiveUserStreamIngestor | None = None,
     keepalive_seconds: int = 30 * 60,
+    alive_seconds: float = 30.0,
     reconnect_delay_seconds: float = 5.0,
     max_reconnect_delay_seconds: float = 60.0,
 ) -> None:
@@ -442,9 +443,11 @@ async def run_user_stream(
             details={"listen_key_suffix": listen_key[-6:]},
         )
         keepalive_task = asyncio.create_task(_keepalive_loop(client, listen_key, keepalive_seconds))
+        alive_task: asyncio.Task[None] | None = None
         try:
             async with websockets.connect(client.websocket_url(listen_key), ping_interval=20) as ws:
                 _record_runtime_heartbeat(component="user_stream", status="connected")
+                alive_task = asyncio.create_task(_alive_loop(alive_seconds))
                 reconnect_delay = reconnect_delay_seconds
                 while True:
                     raw = await ws.recv()
@@ -487,6 +490,10 @@ async def run_user_stream(
             await asyncio.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay_seconds)
         finally:
+            if alive_task is not None:
+                alive_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await alive_task
             keepalive_task.cancel()
             with suppress(asyncio.CancelledError):
                 await keepalive_task
@@ -502,6 +509,20 @@ async def _keepalive_loop(
         client.keepalive(listen_key)
         _record_runtime_heartbeat(component="user_stream", status="listen_key_keepalive")
         log.info("live_user_stream.listen_key_keepalive")
+
+
+async def _alive_loop(interval_seconds: float) -> None:
+    """Write periodic 'alive' heartbeat while the WebSocket is connected.
+
+    Without this, a quiet ETHUSDT window has no heartbeats between the
+    initial 'connected' event and the 30-min 'listen_key_keepalive',
+    breaking the 90-second freshness check at submit-canary time and
+    forcing the operator to restart user-stream right before dispatch.
+    Discovered during canary 2 (2026-05-05); see canary-2026-05-05-addendum.md.
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        _record_runtime_heartbeat(component="user_stream", status="alive")
 
 
 def _record_runtime_heartbeat(

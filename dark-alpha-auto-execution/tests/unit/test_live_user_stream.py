@@ -1,11 +1,13 @@
 """Tests for Binance user-data stream ingestion."""
 
+import asyncio
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
 
 from execution.live_safety import client_order_id
-from execution.live_user_stream import LiveUserStreamIngestor
+from execution.live_user_stream import LiveUserStreamIngestor, _alive_loop
 from storage.db import get_db, init_db
 from strategy.schemas import ExecutionTicket, PlannedOrder
 
@@ -269,3 +271,42 @@ def test_user_stream_emergency_close_partial_fills_are_delta_applied(ready_db: P
     assert position["filled_quantity"] == 0
     assert flatten_order["status"] == "filled"
     assert flatten_order["fill_quantity"] == 0.01
+
+
+async def test_alive_loop_writes_periodic_heartbeats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_alive_loop writes periodic 'alive' heartbeats so the 90s freshness
+    check at submit-canary time stays satisfied during quiet windows.
+
+    Discovered during canary 2 (2026-05-05) when a ~110s gap between
+    'connected' and the next would-be heartbeat caused
+    `user_stream_unhealthy:no_heartbeat_in_last_90s` and forced an
+    operator user-stream restart right before dispatch.
+    """
+    db = tmp_path / "alive.db"
+    monkeypatch.setenv("DB_PATH", str(db))
+    init_db(db)
+
+    task = asyncio.create_task(_alive_loop(interval_seconds=0.05))
+    await asyncio.sleep(0.18)  # ≥3 ticks at 0.05s
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    with get_db(db) as conn:
+        (count,) = conn.execute(
+            "SELECT count(*) FROM live_runtime_heartbeats "
+            "WHERE component='user_stream' AND status='alive'"
+        ).fetchone()
+    assert count >= 2, f"expected ≥2 alive heartbeats in 0.18s @ 0.05s interval, got {count}"
+
+
+async def test_alive_loop_is_cancellable_cleanly() -> None:
+    """_alive_loop must respond to task.cancel() promptly so finally
+    block in run_user_stream can shut it down on disconnect."""
+    task = asyncio.create_task(_alive_loop(interval_seconds=10.0))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
