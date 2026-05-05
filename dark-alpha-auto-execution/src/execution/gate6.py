@@ -19,6 +19,7 @@ from strategy.schemas import ExecutionTicket, PlannedOrder
 from .binance_testnet_broker import (
     BinanceFuturesBroker,
     BinanceFuturesClient,
+    LiveOrderAck,
     _base_url_for_environment,
     normalize_symbol,
 )
@@ -207,7 +208,16 @@ def run_gate6_closeout(
     sync_results = syncer.sync_symbol(symbol)
     repair: Gate6RepairResult | None = None
     if flatten_ack is not None:
-        repair = repair_local_flat_after_closeout(symbol, yes=True)
+        # Bug 6 fix: pass the flatten ack so repair backfills exit_price,
+        # gross/net PnL, and fees onto the position row instead of leaving
+        # them blank. Without this, daily-loss tracker would not see the
+        # real loss and the -$5/day safety cap would not engage.
+        repair = repair_local_flat_after_closeout(
+            symbol,
+            yes=True,
+            flatten_ack=flatten_ack,
+            client=broker.client,
+        )
     reconciler = reconciler or LiveReconciler()
     reconciliation = reconciler.run([symbol])
     path = write_closeout_report(
@@ -229,18 +239,55 @@ def run_gate6_closeout(
     )
 
 
+def _query_flatten_fill(
+    client: BinanceFuturesClient, symbol: str, flatten_ack: LiveOrderAck
+) -> tuple[float, float] | None:
+    """Query Binance for the flatten order's average fill price + qty.
+
+    Bug 6 fix helper. Returns ``(avg_price, executed_qty)`` if the order
+    has a usable fill, else ``None`` (caller falls back to leaving exit
+    fields blank, same as legacy behaviour).
+    """
+    try:
+        order = client.query_order(symbol, flatten_ack.client_order_id)
+    except Exception:  # noqa: BLE001 — best-effort backfill, keep closeout green
+        return None
+    avg = _float(order.get("avgPrice"))
+    qty = _float(order.get("executedQty"))
+    if avg > 0 and qty > 0:
+        return (avg, qty)
+    return None
+
+
+# Estimated round-trip fee rate (entry + exit) for fee approximation in
+# the local_flat_repair backfill path. Real Binance Futures USDT-M taker
+# fee is 0.04% (4 bps) per side; we use 0.05% to stay conservative
+# (overstates fees by ~25%, so net_pnl is slightly under-reported, never
+# over-reported). See `docs/canary-2026-05-05T14-addendum.md` Bug 6.
+_FLATTEN_FEE_RATE_PER_SIDE = 0.0005
+
+
 def repair_local_flat_after_closeout(
     symbol: str,
     *,
     yes: bool,
     client: BinanceFuturesClient | None = None,
     db_path: Path | None = None,
+    flatten_ack: LiveOrderAck | None = None,
 ) -> Gate6RepairResult:
     """Mark local live positions closed after a verified exchange flatten.
 
     This is intentionally conservative: it only repairs local state when the
     exchange reports zero position and no open regular/algo orders for the
     symbol.
+
+    Bug 6 fix: when ``flatten_ack`` is provided, query the exchange for
+    the flatten fill (avgPrice + executedQty) and back-fill
+    ``exit_price`` + ``gross_pnl_usd`` + ``fees_usd`` + ``net_pnl_usd``
+    onto the position row. Without this, the daily-loss tracker reads
+    ``net_pnl_usd=0`` for reconciler-flattened positions and the -$5/day
+    safety cap fails to engage. Discovered during canary 4
+    (2026-05-05T14:00-15:00Z); see `docs/canary-2026-05-05T14-addendum.md`.
     """
     if not yes:
         raise Gate6Error("gate6_repair_requires_yes")
@@ -264,13 +311,18 @@ def repair_local_flat_after_closeout(
     if exchange_client.open_algo_orders(symbol):
         raise Gate6Error("gate6_repair_exchange_algo_orders_still_open")
 
+    flatten_fill: tuple[float, float] | None = None
+    if flatten_ack is not None:
+        flatten_fill = _query_flatten_fill(exchange_client, symbol, flatten_ack)
+
     normalized = normalize_symbol(symbol)
     now = datetime.now(tz=UTC).isoformat()
     ticket_ids: list[str] = []
     with get_db(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT position_id, ticket_id, symbol
+            SELECT position_id, ticket_id, symbol, direction, entry_price,
+                   filled_quantity
               FROM positions
              WHERE shadow_mode=0
                AND status IN ('pending','open','partial')
@@ -278,17 +330,48 @@ def repair_local_flat_after_closeout(
         ).fetchall()
         matching = [row for row in rows if normalize_symbol(str(row["symbol"])) == normalized]
         for row in matching:
-            conn.execute(
-                """
-                UPDATE positions
-                   SET status='closed',
-                       filled_quantity=0,
-                       closed_at=?,
-                       exit_reason='manual_flatten_reconciled'
-                 WHERE position_id=?
-                """,
-                (now, row["position_id"]),
-            )
+            entry_price = _float(row["entry_price"])
+            qty = _float(row["filled_quantity"])
+            direction = str(row["direction"] or "")
+            if flatten_fill and entry_price > 0 and qty > 0 and direction in ("long", "short"):
+                exit_price, _exec_qty = flatten_fill
+                if direction == "long":
+                    gross = (exit_price - entry_price) * qty
+                else:
+                    gross = (entry_price - exit_price) * qty
+                # Approximate fees: round-trip × per-side rate × notional.
+                # Entry-side notional uses entry_price; exit-side uses
+                # exit_price. Real fee is in /fapi/v1/userTrades; this
+                # approximation is within ~25% conservative of true.
+                fees = _FLATTEN_FEE_RATE_PER_SIDE * (entry_price + exit_price) * qty
+                net = gross - fees
+                conn.execute(
+                    """
+                    UPDATE positions
+                       SET status='closed',
+                           filled_quantity=0,
+                           closed_at=?,
+                           exit_reason='manual_flatten_reconciled',
+                           exit_price=?,
+                           gross_pnl_usd=?,
+                           fees_usd=?,
+                           net_pnl_usd=?
+                     WHERE position_id=?
+                    """,
+                    (now, exit_price, gross, fees, net, row["position_id"]),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE positions
+                       SET status='closed',
+                           filled_quantity=0,
+                           closed_at=?,
+                           exit_reason='manual_flatten_reconciled'
+                     WHERE position_id=?
+                    """,
+                    (now, row["position_id"]),
+                )
             if row["ticket_id"]:
                 ticket_ids.append(str(row["ticket_id"]))
         for ticket_id in ticket_ids:
