@@ -269,3 +269,123 @@ def _result(status: str, mismatches: list[str] | None = None) -> object:
             )
         ],
     )
+
+
+# ----------------------------------------------------------------------
+# Bug 5 fix tests — user-stream PID file + stop command
+# ----------------------------------------------------------------------
+
+
+def test_user_stream_stop_no_pid_file(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a PID file, ``user-stream stop`` is a no-op success."""
+    from cli import main as cli_mod
+
+    monkeypatch.setattr(cli_mod, "USER_STREAM_PID_FILE", tmp_path / "user-stream.pid")
+    result = runner.invoke(cli, ["user-stream", "stop"])
+    assert result.exit_code == 0
+    assert "not running" in result.output
+
+
+def test_user_stream_stop_cleans_up_stale_pid_file(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale PID file (process gone) gets cleaned up silently."""
+    from cli import main as cli_mod
+
+    pid_file = tmp_path / "user-stream.pid"
+    pid_file.write_text("999999")
+    monkeypatch.setattr(cli_mod, "USER_STREAM_PID_FILE", pid_file)
+    monkeypatch.setattr(cli_mod, "_user_stream_process_alive", lambda _pid: False)
+
+    result = runner.invoke(cli, ["user-stream", "stop"])
+    assert result.exit_code == 0
+    assert not pid_file.exists()
+    assert "stale PID" in result.output
+
+
+def test_user_stream_stop_sigterms_alive_process(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Alive process gets SIGTERM, then PID file deleted."""
+    import signal
+
+    from cli import main as cli_mod
+
+    pid_file = tmp_path / "user-stream.pid"
+    pid_file.write_text("12345")
+    monkeypatch.setattr(cli_mod, "USER_STREAM_PID_FILE", pid_file)
+
+    alive_calls: list[int] = []
+
+    def fake_alive(pid: int) -> bool:
+        alive_calls.append(pid)
+        # First check returns alive (so we send SIGTERM); next checks
+        # return dead (so loop exits cleanly without SIGKILL).
+        return len(alive_calls) == 1
+
+    monkeypatch.setattr(cli_mod, "_user_stream_process_alive", fake_alive)
+
+    kill_calls: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        kill_calls.append((pid, sig))
+
+    import os
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+
+    result = runner.invoke(cli, ["user-stream", "stop", "--timeout", "0.5"])
+    assert result.exit_code == 0
+    assert (12345, signal.SIGTERM) in kill_calls
+    assert not pid_file.exists()
+    assert "stopped (pid 12345)" in result.output
+
+
+def test_user_stream_stop_escalates_to_sigkill_after_timeout(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If process refuses SIGTERM within timeout, escalate to SIGKILL."""
+    import signal
+
+    from cli import main as cli_mod
+
+    pid_file = tmp_path / "user-stream.pid"
+    pid_file.write_text("12345")
+    monkeypatch.setattr(cli_mod, "USER_STREAM_PID_FILE", pid_file)
+    # Process stays alive throughout the timeout — must escalate.
+    monkeypatch.setattr(cli_mod, "_user_stream_process_alive", lambda _pid: True)
+
+    kill_calls: list[tuple[int, int]] = []
+    import os
+
+    monkeypatch.setattr(os, "kill", lambda pid, sig: kill_calls.append((pid, sig)))
+
+    result = runner.invoke(cli, ["user-stream", "stop", "--timeout", "0.2"])
+    assert result.exit_code == 0
+    assert (12345, signal.SIGTERM) in kill_calls
+    assert (12345, signal.SIGKILL) in kill_calls
+    assert "killed" in result.output
+    assert not pid_file.exists()
+
+
+def test_user_stream_listen_refuses_when_already_running(
+    runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug 5: refuse second listen when previous instance is alive,
+    preventing zombie accumulation."""
+    from cli import main as cli_mod
+
+    pid_file = tmp_path / "user-stream.pid"
+    pid_file.write_text("12345")
+    monkeypatch.setattr(cli_mod, "USER_STREAM_PID_FILE", pid_file)
+    monkeypatch.setattr(cli_mod, "_user_stream_process_alive", lambda _pid: True)
+
+    result = runner.invoke(cli, ["user-stream", "listen"])
+    assert result.exit_code == 2
+    assert "another instance is running" in result.output
+    assert "12345" in result.output
+    # PID file must NOT be touched (still belongs to running instance).
+    assert pid_file.exists()
+    assert pid_file.read_text() == "12345"

@@ -223,15 +223,56 @@ def user_stream() -> None:
     """Binance Futures user data stream controls."""
 
 
+USER_STREAM_PID_FILE = Path("data/user-stream.pid")
+
+
+def _user_stream_process_alive(pid: int) -> bool:
+    """Check whether the given PID is still running. Bug 5 — pkill -f
+    matched the bash wrapper, not the python child. PID file gives us
+    an exact handle."""
+    try:
+        import os
+
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
 @user_stream.command("listen")
 @click.option("--once", is_flag=True, help="Exit after the first WebSocket message")
 def user_stream_listen(once: bool) -> None:
-    """Listen to Binance user-data stream and ingest live fill events."""
+    """Listen to Binance user-data stream and ingest live fill events.
+
+    Writes its own PID to ``data/user-stream.pid`` so a future
+    ``user-stream stop`` can kill the right process. Refuses to start
+    if a previous user-stream is already running (prevents zombie
+    accumulation — see Bug 5 in canary 4 addendum).
+    """
     import asyncio
+    import os
 
     from execution.live_safety import LivePreflightError, assert_live_mode_enabled
     from execution.live_user_stream import UserStreamError, run_user_stream
 
+    if USER_STREAM_PID_FILE.exists():
+        try:
+            existing_pid = int(USER_STREAM_PID_FILE.read_text().strip())
+        except ValueError:
+            existing_pid = -1
+        if existing_pid > 0 and _user_stream_process_alive(existing_pid):
+            click.echo(
+                f"✗ user-stream listen refused: another instance is running "
+                f"(pid {existing_pid}). "
+                f"Run `dark-alpha user-stream stop` first.",
+                err=True,
+            )
+            sys.exit(2)
+        # Stale PID file — clean up.
+        USER_STREAM_PID_FILE.unlink(missing_ok=True)
+
+    USER_STREAM_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    USER_STREAM_PID_FILE.write_text(str(os.getpid()))
     try:
         assert_live_mode_enabled()
         asyncio.run(run_user_stream(once=once))
@@ -240,6 +281,74 @@ def user_stream_listen(once: bool) -> None:
         sys.exit(2)
     except KeyboardInterrupt:
         click.echo("user-stream stopped.")
+    finally:
+        # Only delete PID file if we still own it (defensive against
+        # parallel writes from another instance).
+        try:
+            owned = USER_STREAM_PID_FILE.exists() and (
+                int(USER_STREAM_PID_FILE.read_text().strip()) == os.getpid()
+            )
+        except (OSError, ValueError):
+            owned = False
+        if owned:
+            USER_STREAM_PID_FILE.unlink(missing_ok=True)
+
+
+@user_stream.command("stop")
+@click.option(
+    "--timeout",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Seconds to wait after SIGTERM before escalating to SIGKILL.",
+)
+def user_stream_stop(timeout: float) -> None:
+    """Stop the running user-stream listener.
+
+    Reads ``data/user-stream.pid`` and sends SIGTERM to the recorded
+    PID. If the process has not exited within ``--timeout`` seconds,
+    sends SIGKILL. Cleans up the PID file on success.
+    """
+    import os
+    import signal
+    import time
+    from contextlib import suppress
+
+    if not USER_STREAM_PID_FILE.exists():
+        click.echo("user-stream not running (no PID file).")
+        return
+    try:
+        pid = int(USER_STREAM_PID_FILE.read_text().strip())
+    except ValueError:
+        click.echo(
+            f"✗ user-stream stop: PID file at {USER_STREAM_PID_FILE} is corrupted",
+            err=True,
+        )
+        sys.exit(2)
+    if not _user_stream_process_alive(pid):
+        click.echo(f"user-stream not running (stale PID {pid}); cleaning up file.")
+        USER_STREAM_PID_FILE.unlink(missing_ok=True)
+        return
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError) as exc:
+        click.echo(f"✗ user-stream stop: kill failed: {exc}", err=True)
+        sys.exit(2)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _user_stream_process_alive(pid):
+            USER_STREAM_PID_FILE.unlink(missing_ok=True)
+            click.echo(f"user-stream stopped (pid {pid}).")
+            return
+        time.sleep(0.1)
+
+    # Escalate to SIGKILL.
+    with suppress(OSError, ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+    USER_STREAM_PID_FILE.unlink(missing_ok=True)
+    click.echo(f"user-stream killed (pid {pid}, SIGKILL after {timeout:.1f}s).")
 
 
 @cli.group("gate2-test")
