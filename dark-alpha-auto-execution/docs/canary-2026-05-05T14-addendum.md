@@ -40,7 +40,10 @@ position and flattened. **DB exit_price / net_pnl not populated**
 | orders dispatched | 3 (entry + stop + tp) |
 | accepted by Binance | yes (3/3) |
 | **filled** | **YES — entry filled @ 2382.38, 0.033 ETH** |
-| **PnL (realized)** | **pending Binance UI verification** |
+| flatten exit | MARKET SELL @ 2377.59, 0.033 ETH (Binance order 8389766172243536689) |
+| **gross PnL (realized)** | **-$0.15807 USDT** (verified via Binance UI screenshot) |
+| flatten fee | 0.00005599 BNB (~$0.025 USDT equivalent) |
+| net PnL after BNB fees | ≈ -$0.183 USDT |
 
 ## Closeout
 
@@ -230,6 +233,18 @@ Reasons:
 ## Operator follow-ups (TODO before canary 5)
 
 1. **Check Binance UI Trade History** for canary 4's flatten
-   trade and report actual realized PnL.
+   trade and report actual realized PnL. ✅ **DONE
+   2026-05-05T~15:00Z** — flatten was MARKET SELL @ 2377.59,
+   0.033 ETH; realized PnL = **-$0.15807 USDT** + 0.00005599
+   BNB fees (~$0.025). Bug 6 fix's `gross_pnl` formula
+   `(exit - entry) × qty` was independently verified against
+   Binance's `已實現盈虧` field — **bit-for-bit match at
+   -$0.15807** at 5 decimal places.
 2. **Top up mainnet Futures wallet to ≥$200** before next canary.
+   ✅ **DONE** — operator confirmed wallet at $200 USDT after
+   canary 4 closeout.
 3. **Wait for Bug 5 + 6 fixes** to land before canary 5.
+   ✅ **DONE** — commit `786d28c` (Bug 5: PID file +
+   `user-stream stop`) and commit `50fe87a` (Bug 6: backfill
+   exit_price + PnL on closeout flatten path). 425/425 unit
+   tests pass.
